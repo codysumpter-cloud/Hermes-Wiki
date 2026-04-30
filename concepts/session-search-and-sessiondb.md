@@ -1,7 +1,7 @@
 ---
 title: Session Search and SessionDB
 created: 2026-04-07
-updated: 2026-04-11
+updated: 2026-04-18
 type: concept
 tags: [session-search, session-store, memory, architecture]
 sources: [hermes-agent 源码分析 2026-04-07]
@@ -146,6 +146,38 @@ LLM 生成摘要
 - `prune_sessions(older_than_days=90)` 只清理已结束的 session，活跃 session 不受影响
 
 设计意图：保护历史数据完整性，避免清理操作误删有价值的对话记录。
+
+### 启动时自动修剪 + VACUUM（v2026.4.18+）
+
+`state.db` 之前无限增长——一个重度用户（gateway + cron）报告 384MB / 982 sessions / 68K 消息导致性能下降，手动 `hermes sessions prune --older-than 7` + `VACUUM` 后降到 43MB。v2026.4.18+ 在启动时自动执行：
+
+```python
+# hermes_state.py
+class SessionDB:
+    def vacuum(self): ...
+
+    def maybe_auto_prune_and_vacuum(
+        self,
+        retention_days: int = 90,        # 清理 90 天以上已结束 session
+        min_interval_hours: int = 24,    # 默认每天一次
+        vacuum: bool = True,
+    ) -> Dict[str, Any]:
+        """幂等：state_meta 表记录 last_auto_prune，跨进程同一 HERMES_HOME 共享锁
+        返回 {'skipped', 'pruned', 'vacuumed', 'error'?}"""
+```
+
+- 新增 `state_meta` key/value 表存储上次运行时间戳（key: `last_auto_prune`）
+- 同一 `HERMES_HOME` 下所有 Hermes 进程共享，`min_interval_hours` 内 no-op
+- **智能 VACUUM**：只有 `pruned > 0` 才真正执行 VACUUM（`hermes_state.py:1567`），空清理不浪费 I/O
+- 永不抛异常——失败记 warning 不影响启动
+
+## 更新 `/usage` 显示账户限制（v2026.4.18+）
+
+`/usage` 命令在原有 token 表格下追加**账户级配额信息**（provider 侧返回的剩余额度、周期、限流）：
+
+- CLI（`cli.py`）：`concurrent.futures.ThreadPoolExecutor(max_workers=1)` + 10s timeout 里 fetch，慢 provider 不会卡 prompt
+- Gateway（`gateway/run.py`）：通过 `asyncio.to_thread` fetch；无 agent 驻留时从 `billing_provider` / `billing_base_url` 持久化字段解析 provider
+- 新模块 `agent/account_usage.py`（326 行）提供 `fetch_account_usage(provider, base_url, api_key)` 和 `render_account_usage_lines(snapshot, markdown)` 两个入口
 
 ## 相关页面
 
