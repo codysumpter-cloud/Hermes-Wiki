@@ -233,9 +233,19 @@ skills:
 | 质量 | 用户控制 | agent 自主判断，可能创建也可能跳过 |
 | LLM 消耗 | 主对话的一部分 | 额外消耗（后台 agent 最多 8 轮迭代） |
 
-## Curator — 后台技能维护（v2026.4.23+）
+## Curator — 后台技能维护（v2026.4.23 引入，v0.12.0 升级）
 
-新增**辅助模型驱动的后台维护机制**（`agent/curator.py`，869 行 + `hermes_cli/curator.py`，235 行 + `tools/skill_usage.py`）。定期审查**agent 创建的**技能，跟踪使用情况，并把闲置 skill 经过状态机转换归档。
+新增**辅助模型驱动的后台维护机制**（`agent/curator.py` + `hermes_cli/curator.py` + `tools/skill_usage.py`）。定期审查**agent 创建的**技能，跟踪使用情况，并把闲置 skill 经过状态机转换归档。
+
+### v0.12.0 升级要点
+
+- **作为后台 agent 运行**：跑在 gateway 的 cron-ticker 上，**默认 7 天周期**（`DEFAULT_INTERVAL_HOURS = 24 * 7`，`agent/curator.py:56`），unbounded iterations，umbrella-first prompt。
+- **每轮报告**：`logs/curator/run.json` + `REPORT.md`。
+- **consolidated vs pruned 分类**：归档 skill 用模型 + 启发式区分"被合并"和"被剪枝"。
+- **`hermes curator status` 排序**：按使用频次显示 most-used / least-used。
+- **统一在 `auxiliary.curator`**：在 `hermes model` 选 curator 模型；可在 dashboard 配置 `auxiliary.curator.{provider, model, timeout, ...}`。源：`agent/curator.py:1483` 的迁移提示和 `_resolve_review_runtime()`。
+- **bump_use() 接入 skill 调用 + preload + skill_view**（v0.12.0 #17932）。
+- **`restore_skill` 扫描嵌套 archive 子目录**（@0xDevNinja，#17951）。
 
 ### 不变量（load-bearing invariants）
 
@@ -299,6 +309,29 @@ if rec.get("pinned"):
 ```
 
 这是 Curator 不变量的延伸——pinned 状态对 agent 也是禁区，只能通过 `hermes curator unpin` 显式解锁。
+
+## v0.12.0 新增/晋升的技能
+
+| 技能 | 状态 | 说明 |
+|------|------|------|
+| `comfyui` | **从 optional 升级为 built-in by default**（`skills/creative/comfyui/`） | v5：官方 CLI + REST + 硬件门控的本地安装；ComfyUI 文档"先问云 vs 本地，再硬件检查" |
+| `touchdesigner-mcp` | **bundled by default**（`skills/creative/touchdesigner-mcp/`） | 扩展 GLSL / post-FX / audio / geometry，9 篇新参考文档 |
+| `humanizer` | 新增 | 移植自 OpenClaw，剥离 AI-isms |
+| `claude-design` | 新增 | HTML artifact 技能；与其他 design 技能消歧 |
+| `design-md` | 新增 | Google `DESIGN.md` 规范 |
+| `airtable` | 新增（salvage） | skill API key 写入 `.env` |
+| `pretext` / `spike` / `sketch` | 新增 | 创意/HTML mockup |
+| `kanban-video-orchestrator` | 新增（重命名自 `video-orchestrator`） | 视频编排创意技能 |
+
+源：`/tmp/hermes-agent/skills/creative/` 及 `RELEASE_v0.12.0.md`。
+
+## 技能安装/管理增强
+
+- **直接 URL 安装**：`hermes skills install <https://...>` 一步装包
+- **`hermes skills list`** 显示 enabled/disabled 状态
+- **`skill_manage` 在 `external_dirs` 中原地编辑**（v0.12.0 #17512）
+- **`.archive/` 目录从 skill index walk 排除**（v0.12.0 #17931）
+- **bundled skill 同步到所有 profile 包括 active**（v0.12.0 #16176）
 
 ## 相关页面
 

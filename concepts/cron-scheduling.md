@@ -164,6 +164,35 @@ cronjob(
 )
 ```
 
+## v0.12.0 新增能力
+
+### `no_agent` 模式（脚本即任务）
+
+```python
+cronjob(
+    action="create",
+    name="watchdog-disk",
+    schedule="*/5 * * * *",
+    no_agent=True,
+    script="/usr/local/bin/check_disk.sh",
+    workdir="/var/log",
+    deliver="telegram",
+)
+```
+
+- 源：`cron/jobs.py:438`、`cron/scheduler.py:857`
+- `no_agent=True` 时**完全跳过 LLM**：脚本就是任务，stdout 原样投递；空 stdout 视为静默成功（不打扰用户）。
+- `no_agent` 必须搭配 `script`（无脚本会拒绝）；`prompt` 字段被忽略。
+- 模块顶层延迟导入，让 watchdog tick 不为 AIAgent / SessionDB 付出冷启动开销。
+- 可选 `wakeAgent` 字段决定是否在投递时唤醒目标平台的 agent 会话。
+
+### 其他变更
+
+- `croniter` 提升为核心依赖（v0.12.0 #17577），不再需要 extras
+- 每个 job 支持 `workdir`（项目级 cron）、`context_from`（链式输出）
+- `${VAR}` 在 cron 任务运行时从 `config.yaml` 展开（v0.12.0 #15890）
+- 并发跑同一 job 时单独写状态，规避 race（v0.12.0 #1c7f47a 新增回归测试）
+
 ## 网关集成
 
 ```bash
@@ -182,7 +211,8 @@ hermes gateway start
 |------|--------|-------------|--------|
 | 内置调度器 | ✅ | ❌ | ❌ |
 | 自然语言调度 | ✅ | ❌ | ❌ |
-| 多平台投递 | ✅ 14 平台 | ❌ | ❌ |
+| 多平台投递 | ✅ 19 平台 | ❌ | ❌ |
+| 脚本-only watchdog | ✅ `no_agent` | ❌ | ❌ |
 | Cron 表达式 | ✅ | ❌ | ❌ |
 | 相对时间 | ✅ "30m", "every 2h" | ❌ | ❌ |
 | 任务管理 | ✅ CLI/Gateway | ❌ | ❌ |

@@ -365,9 +365,13 @@ approvals:
 匹配规则涵盖：
 - 破坏性操作：`rm -rf`、`mkfs`、`dd`、`truncate` 等
 - 权限提升：`sudo`、`su`、`chmod 777`
-- 敏感文件写入：`/etc/`、`~/.ssh/`、`~/.hermes/.env`
+- 敏感文件写入：`/etc/`、`~/.ssh/`、`~/.hermes/.env`、shell rc 文件、credential 文件（v0.12.0 #69dd0f7 扩大覆盖）
 - 网络操作：`curl | bash`、端口监听
 - 环境变量操控：覆盖 `PATH`、`LD_PRELOAD`
+
+### Hardline blocklist（v0.12.0）
+
+v0.12.0 #15878 引入"硬性"黑名单——某些不可恢复的命令（如 `rm -rf /`、`> /dev/sda`）**直接拒绝执行**，连 manual 模式都不出审批弹窗。配合 #17206 的 `DANGEROUS_PATTERNS` / `HARDLINE_PATTERNS` 预编译，cold-path 也几乎零开销。
 
 ### Per-session 状态
 
@@ -378,6 +382,24 @@ approvals:
 - `tools/tirith_security.py` — Tirith 安全策略引擎（homograph URL、pipe-to-shell、terminal 注入）
 - `tools/url_safety.py` — URL 安全检查（SSRF 防护：拦截私有网络、云元数据地址、验证重定向）
 - `tools/osv_check.py` — 依赖恶意软件扫描（OSV 数据库）
+- `agent/redact.py` — **密钥脱敏（v0.12.0 后默认 OFF）**
+
+### 密钥脱敏的 v0.12.0 重要变更
+
+v0.12.0 #16794 把 secret redaction 默认 **flip 到 off**——长期以来 redaction 会把 patch / API payload 中误判的 "key-shaped" 子串改坏（patch corruption），所以默认行为改为不脱敏。
+
+```python
+# agent/redact.py:64
+_REDACT_ENABLED = os.getenv("HERMES_REDACT_SECRETS", "").lower() in ("1","true","yes","on")
+# OFF by default — opt in via security.redact_secrets: true in config.yaml
+# (bridged to HERMES_REDACT_SECRETS in hermes_cli/main.py and gateway/run.py)
+```
+
+注意：浏览器快照发送给辅助 LLM 之前**仍然强制**走 `redact_sensitive_text(..., force=True)`（见 [[browser-tool-architecture]]）——这是显式 `force=True` 调用，与全局开关无关。
+
+### 系统标记重命名
+
+v0.12.0 #16114 把所有用户注入标记从 `[SYSTEM:` 重命名为 `[IMPORTANT:`，绕过 Azure 内容过滤器对 "SYSTEM" 关键字的误报。
 
 ## 相关页面
 

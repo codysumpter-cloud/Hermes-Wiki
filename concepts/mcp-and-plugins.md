@@ -163,6 +163,38 @@ hermes plugins remove <name>  # 移除插件
 hermes plugins update <name>  # 更新插件
 ```
 
+## v0.12.0 内置插件清单
+
+`/tmp/hermes-agent/plugins/` 目录新增/扩展：
+
+| 插件 | 路径 | 说明 |
+|------|------|------|
+| `spotify` | `plugins/spotify/` | 7 个 native tool（play / search / queue / playlists / devices）+ PKCE OAuth + 交互式 setup 向导，可在 `hermes tools` 中切换 |
+| `google_meet` | `plugins/google_meet/` | 加入会议、转录、说话、跟进；OpenAI realtime transport + Node bot server，全管道 bundled |
+| `observability/langfuse` | `plugins/observability/langfuse/` | Langfuse observability bundled |
+| `hermes-achievements` | `plugins/hermes-achievements/` | 扫描全部 session 历史输出"成就" |
+| `kanban` | `plugins/kanban/` | 看板插件 + per-platform home-channel 通知 toggle（v0.12.0 #19864） |
+| `image_gen` | `plugins/image_gen/` | 图像生成 |
+| `context_engine` | `plugins/context_engine/` | Context Engine 插件化 |
+| `memory` | `plugins/memory/` | Memory provider |
+| `disk-cleanup` / `example-dashboard` / `strike-freedom-cockpit` | … | 例示/工具型插件 |
+
+平台插件目录 `plugins/platforms/`：
+
+- `irc/`：v2026.4.23 加入，参考实现
+- `teams/`：v0.12.0 新增（**第 19 个消息平台**），通过 `register(ctx)` 调 `ctx.register_platform(...)` 注入，最大消息长度 28KB
+
+### 新增 Hook 类型（v0.12.0）
+
+- `pre_gateway_dispatch`（#15050）：插件可在 gateway 派发前拦截
+- `pre_approval_request` / `post_approval_response`（#16776）：审批请求前后注入
+- `post_tool_call` 增加 `duration_ms` 字段（#15429，灵感来自 Claude Code 2.1.119）
+
+### 直接 URL 安装
+
+- 技能：`hermes skills install <https://...>`（#16323）
+- NixOS module：`extraPackages` + 声明式插件安装（@alt-glitch，#15953/#17047）
+
 ## 配置
 
 ```yaml

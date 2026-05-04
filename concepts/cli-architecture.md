@@ -1,10 +1,10 @@
 ---
 title: CLI 架构与终端交互设计
 created: 2026-04-07
-updated: 2026-04-11
+updated: 2026-05-04
 type: concept
 tags: [architecture, cli, terminal, ux]
-sources: [hermes-agent 源码分析 2026-04-07]
+sources: [cli.py, hermes_cli/_parser.py, hermes_cli/main.py, hermes_cli/commands.py]
 ---
 
 # CLI 架构与终端交互设计
@@ -120,6 +120,39 @@ def set_active_skin(name: str): ...
 display:
   skin: "default"  # 或自定义皮肤名称
 ```
+
+## v0.12.0 新增 CLI 能力（2026-04-30）
+
+### 一次性运行模式（`hermes -z`）
+
+```bash
+hermes -z "summarize the diff in the current branch" --model openai:gpt-5.5
+HERMES_INFERENCE_MODEL=anthropic:claude-opus-4-7 hermes -z "..."
+```
+
+源：`hermes_cli/_parser.py:97`。`-z/--oneshot` 加载工具/记忆/`AGENTS.md`/规则、自动跳过审批、只输出最终回复（无 banner、spinner、tool preview、session_id 行），适合脚本和管道。
+
+### 新增/调整斜杠命令
+
+| 命令 | 作用 | 备注 |
+|------|------|------|
+| `/busy` | 切换 busy 输入模式（busy / queue / steer） | v0.12.0 |
+| `/btw` | `/background` 别名 | v0.12.0 |
+| `/reload` | TUI 中热加载 `.env` | v0.12.0 |
+| `/reload-skills` | 重新扫描技能目录 | v2026.4.23 引入；v0.12.0 在 TUI 也走 live exec |
+| `/mouse` | 在 ConPTY 上手动启停鼠标支持，修复 WSL2 ghost-mouse | v0.12.0 |
+| `/topic on\|off` | Telegram DM 主题模式（gateway 命令） | v0.12.0 之后 |
+| `/provider` / `/plan` | **已删除** | v0.12.0 ([#15047](https://github.com/NousResearch/hermes-agent/pull/15047)) |
+
+### 更新与备份
+
+- `hermes update --check` 预飞检查（不实际更新）
+- `HERMES_HOME` 备份默认 opt-in；`backup_keep` 至少保留 1 份
+- `checkpoints/` 与 SQLite WAL/SHM/journal sidecar 自动排除
+
+### `/fast` 收敛
+
+`/fast` 仅在 Anthropic Opus 4.6 上有效（fast mode 由 Anthropic API 限定）。源：`agent/anthropic_adapter.py:79 _FAST_MODE_SUPPORTED_SUBSTRINGS = ("opus-4-6", "opus-4.6")`，并通过 `_supports_fast_mode()` 守卫。其他模型设置 `extra_body["speed"]="fast"` 会被剥除，避免 400。
 
 ## 优越性分析
 

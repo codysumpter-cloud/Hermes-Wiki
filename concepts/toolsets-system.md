@@ -76,6 +76,13 @@ TOOLSETS = {
         "tools": _HERMES_CORE_TOOLS,  # 使用核心工具列表
         "includes": []
     },
+
+    # 视频理解（v0.12.0 新增；opt-in 不在默认工具集）
+    "video": {
+        "description": "Video analysis and understanding tools (opt-in, not in default toolset)",
+        "tools": ["video_analyze"],
+        "includes": [],
+    },
     
     "hermes-acp": {
         "description": "Editor integration (VS Code, Zed, JetBrains)",
