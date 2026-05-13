@@ -1,10 +1,10 @@
 ---
 title: Prompt Caching 优化架构
 created: 2026-04-07
-updated: 2026-04-08
+updated: 2026-05-13
 type: concept
-tags: [architecture, module, performance, cost-optimization, anthropic]
-sources: [agent/prompt_caching.py, run_agent.py]
+tags: [architecture, module, performance, cost-optimization, anthropic, prompt-cache]
+sources: [agent/prompt_caching.py, run_agent.py, hermes_cli/config.py]
 ---
 
 # Prompt Caching — Anthropic 缓存优化架构
@@ -97,7 +97,23 @@ marker = {"type": "ephemeral", "ttl": "1h"}  # 1 小时 TTL
 
 **使用场景**：
 - **5m（默认）**：适合快速连续对话，缓存命中率高
-- **1h**：适合长时间对话间隔，容忍更高的缓存未命中
+- **1h**：适合长时间对话间隔，容忍更高的缓存未命中（写入成本 2x，5m 是 1.25x，长 session 摊销下来更划算）
+
+### 1h cross-session prefix cache（PR #23828，v0.12.0+）
+
+`config.yaml` 中 `prompt_caching.cache_ttl: "1h"` 开启 1 小时 TTL，让 system prompt 的 cache prefix 可以**跨 session 命中**。覆盖 Anthropic 原生、OpenRouter、Nous Portal 三条 Claude 路径。
+
+`run_agent.py:1455-1470` 读取配置（未知值回退 `"5m"`），实际生效值会在启动 banner 打印：`💾 Prompt caching: ENABLED (<source>, <ttl> TTL)`。
+
+### 系统提示在 session 内字节稳定（PR #24778，b06e999）
+
+之前为了榨干 cache hit 用过 "long-lived prefix layout"（保留 prefix 在多次系统提示重建间稳定），但维护成本高且容易因细微差异破坏命中。新策略：**系统提示在一个 session 内保证 byte-static**——即工具索引、技能索引、内存快照都在 session 启动时冻结一份，turn-by-turn 不再重新组装。这样：
+
+- 不需要 "long-lived prefix" 那套 patch / preserve-prefix 逻辑
+- 缓存命中等价于 "system prompt 字节完全一致"——更鲁棒，调试更直接
+- 跨 session（1h TTL 模式下）只要系统提示 + 工具 schema 没变，仍然能复用
+
+提交信息原文："kill long-lived prefix layout — system prompt is now byte-static within a session"。
 
 ## 成本效益
 

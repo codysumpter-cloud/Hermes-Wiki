@@ -188,6 +188,37 @@ _CONTEXT_THREAT_PATTERNS = [
 
 **注意区分**：此缓存优化的是"生成索引文本"的 I/O 速度，与 LLM API 层的 prefix cache（复用已计算的 token）是不同层面。
 
+## Per-turn 文件修改验证 footer（v0.12.0+，PR #24498，c594a23）
+
+每一轮 agent 调用结束时，Hermes 给 user 反方向附一段 verifier footer，列出**本轮内 write_file / patch 失败但 agent 没自己修好的文件**。模型由此能在下一轮立刻看到自己留的烂摊子，不会"忘记修"。
+
+```python
+# run_agent.py:5331-5395
+def _record_file_mutation_result(self, tool_name, args, result, is_error):
+    """write_file / patch 的成功/失败状态写入 self._turn_failed_file_mutations。
+
+    - tool_name 不在 FILE_MUTATING_TOOL_NAMES → 跳过（统一从 agent/tool_result_classification 导入，c3094b4）
+    - 失败 → 第一次失败的 error preview 存进 {path: {error_preview, tool}}
+    - 同一 path 后续成功 → state.pop(path) 清掉
+    - 同一 path 后续不同错误 → 不覆盖第一次的 error（避免噪声）
+    """
+```
+
+**判定"成功"** 走 `file_mutation_result_landed(tool_name, result)`——并非靠 `is_error` flag，而是看 tool 结果里的 landed 状态。`fix(da0ddbf)` 起，landed mutation 即使 tool 报错也算成功（compaction 跑 patch 时 tool result 拿不到，但变更已落盘）。
+
+**开关**：
+
+| 来源 | Key | 默认 |
+|------|-----|------|
+| Config | `display.file_mutation_verifier` (bool) | `True` |
+| Env | `HERMES_FILE_MUTATION_VERIFIER` (0/1/false/true/no/off) | — |
+
+env > config > 默认。env 不接受时取 config，config 没设时默认 on。
+
+**与 LSP 协同**（PR #24168，83b9389）：`write_file` / `patch` 落盘后跑 LSP 语义诊断（pyright / tsc / shellcheck），把 diagnostics 作为单独 channel 返回给 agent（不是错误）。配合 in-process linter（PR #20191，5168226，覆盖 JSON / YAML / TOML / Python）形成两层 post-write 检查：
+1. **delta lint**（in-process）：写完立刻 lint，差量 diagnostic 直接附在 tool result 里
+2. **LSP semantic**（external）：跑真正的 language server，结果作为 `lsp_diagnostics` 字段
+
 ## 角色切换
 
 某些模型使用 `developer` 角色而不是 `system` 角色：

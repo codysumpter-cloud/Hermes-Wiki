@@ -233,16 +233,19 @@ skills:
 | 质量 | 用户控制 | agent 自主判断，可能创建也可能跳过 |
 | LLM 消耗 | 主对话的一部分 | 额外消耗（后台 agent 最多 8 轮迭代） |
 
-## Curator — 后台技能维护（v2026.4.23+）
+## Curator — 后台技能维护（v2026.4.23+，v0.12.0 大幅扩展）
 
-新增**辅助模型驱动的后台维护机制**（`agent/curator.py`，869 行 + `hermes_cli/curator.py`，235 行 + `tools/skill_usage.py`）。定期审查**agent 创建的**技能，跟踪使用情况，并把闲置 skill 经过状态机转换归档。
+新增**辅助模型驱动的后台维护机制**（`agent/curator.py` 1781 行 + `hermes_cli/curator.py` 598 行 + `tools/skill_usage.py` 609 行，截至 v0.13.0）。定期审查**agent 创建的**技能，跟踪使用情况，并把闲置 skill 经过状态机转换归档。
+
+> v0.12.0 改造（0da66e8）：curator 全面统一到 **auxiliary** 入口（`hermes` 主模型/dashboard 一致），不再用专用 client。配置 `auxiliary.curator.*`。
 
 ### 不变量（load-bearing invariants）
 
-- **永不触碰** bundled 或 hub-installed 技能（`.bundled_manifest` + `.hub/lock.json` 双过滤）
+- **永不触碰** bundled 或 hub-installed 技能（`.bundled_manifest` + `.hub/lock.json` 双过滤；v0.12.0 进一步加入 **frontmatter name 保护**——68e4664，避免重命名后绕过 hub 检查）
 - **永不自动删除** —— 只归档，可通过 `hermes curator restore <skill>` 恢复
-- **Pinned skills 跳过所有自动转换**：`tools/skill_manager_tool.py:_pinned_guard()` 在 `skill_manage` 写入路径上拦截 pinned skill 修改
+- **Pinned skills 跳过所有自动转换**：`tools/skill_manager_tool.py:_pinned_guard()` 在 `skill_manage` 写入路径上拦截 pinned skill 修改；v0.12.0 起 pin 仅保护 **删除**，**编辑** 仍允许（b10e38e）——避免 pin 锁死后无法修 bug
 - 使用 aux client，**永不污染主 session 的 prompt cache**
+- `.archive/` 在 skill index walk 和 skills_tool 中**全部跳过**（eda1d51 + a845177），不再误把归档当作活跃 skill 推给 agent
 
 ### 触发逻辑
 
@@ -271,15 +274,32 @@ active ──不用 N 天──> stale ──继续不用──> archived
 ### CLI
 
 ```bash
-hermes curator status        # 当前状态、待处理 skill
+hermes curator status        # 当前状态、待处理 skill（v0.12.0+ 显示 most-used / least-used，d60a991）
 hermes curator run           # 立即跑一轮
 hermes curator pause/resume  # 暂停/恢复
-hermes curator pin <skill>   # 钉住某个 skill（跳过自动转换）
+hermes curator pin <skill>   # 钉住某个 skill（v0.12.0 起仅保护删除）
 hermes curator unpin <skill>
 hermes curator restore <skill>  # 从归档恢复
+# v0.12.0+ 新增子命令（436672d）：
+hermes curator archive <skill>  # 手动归档
+hermes curator prune            # 把已 archived 的 skill 物理移除（保留 backup）
+hermes curator backup           # 显式打 backup 快照
+hermes curator rollback         # 还原最近 backup
+hermes curator list-archived    # 看 archived 列表
 ```
 
 `/curator` 斜杠命令暴露相同子命令。
+
+### v0.12.0 增强（2026-04-30 ~ 2026-05-13）
+
+- **`archive` / `prune` 子命令**（436672d）：分离 "下架"（archive）和 "物理清理"（prune）两个步骤——archive 是可逆的状态变更，prune 真正删除文件（带 backup 兜底）。
+- **`backup` / `rollback`**：每次结构性变更打快照；`rollback` 一键还原最近一次 backup，配合 `prune` 的"先 backup 再删"形成完整恢复链。
+- **状态机分裂 archived → consolidated / pruned**（8b290a5）：模型 + 启发式联合分类，区分"被合并到别的 skill"（consolidated）和"无价值清除"（pruned），统计更准。
+- **`bump_use()` 接入更多调用点**（4178ab3 + ae8930a）：skill invocation 和 preload paths 都走 `bump_use()`，连 `skill_view` 工具调用也算一次"使用"——闲置判定更准。
+- **嵌套 archive 子目录扫描**（564a649）：`restore_skill` 能进到嵌套子目录里找 archive。
+- **最近使用 / 最少使用展示**（d60a991）：`hermes curator status` 输出 most-used 和 least-used 列表。
+- **`hermes curator pin` 提示**（7312f7e）：rename block 时建议用户 `hermes curator pin` 防止后续被自动整合。
+- **defaults seed-on-update + logs dir + 延迟 fire 导入**（e8e5985）：curator 配置首次 update 时填入默认值，自动建 `logs/curator` 目录，`fire` 库改成 lazy import 避免影响启动时长。
 
 ## /reload-skills 和 /reload-mcp（v2026.4.23+）
 

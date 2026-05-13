@@ -1,10 +1,10 @@
 ---
 title: Cron 调度与自动化工作流
 created: 2026-04-07
-updated: 2026-04-07
+updated: 2026-05-13
 type: concept
-tags: [architecture, cron, automation, scheduling]
-sources: [hermes-agent 源码分析 2026-04-07]
+tags: [architecture, cron, automation, scheduling, watchdog, no-agent]
+sources: [cron/jobs.py, cron/scheduler.py, hermes_cli/cron.py, tools/cronjob_tools.py]
 ---
 
 # Cron 调度与自动化工作流
@@ -105,6 +105,35 @@ job = {
 # - 相对: "30m", "every 2h", "daily"
 # - ISO: "2026-04-08T09:00:00"
 ```
+
+## `no_agent` 模式（v0.12.0+，3db6b9c）
+
+为典型的 watchdog / 数据采集场景增加 LLM-free 通道：script **就是** job，stdout 直接投递，不经过 agent。
+
+```python
+# cron/jobs.py:1041-1106
+if job.get("no_agent"):
+    # 必须配 script，否则错误：
+    #   "no_agent=True but no script is set for this job"
+    # script 路径相对于 ~/.hermes/scripts/；.sh/.bash 走 bash，其他走 python
+    # script 的 cwd 就是 subprocess cwd（不接入 workdir 系统）
+    # stdout 非空 → 作为 "**Mode:** no_agent (script)\n..." 投递
+    # stdout 空 → silent run（不打扰用户）
+    # wakeAgent=false gate → 即使有输出也静默
+```
+
+**两种 script 模式的区别**：
+
+| 模式 | `no_agent` 取值 | script 用途 | LLM 介入 |
+|------|----------------|------------|---------|
+| **传统数据采集** | `False`（缺省） | script stdout 作为 context 注入 agent prompt | ✅ Agent 处理 → 投递 |
+| **`no_agent` watchdog** | `True` | script stdout **就是**投递内容 | ❌ 完全不用 LLM |
+
+适用场景：磁盘空间预警、备份校验、上行链路探测——这些不需要 LLM 推理，每次跑都消耗 token 反而浪费。
+
+**CLI 暴露**（`hermes_cli/cron.py:96, 177, 233`）：`hermes cron create --no-agent` 创建，`hermes cron list` 显示 `Mode: no-agent (script stdout delivered directly)`。
+
+**并发测试**：`tests/cron/test_cron_no_agent.py`（专用回归）+ `1c7f47a` 加入并行 job 状态写入回归。
 
 ## 投递目标
 

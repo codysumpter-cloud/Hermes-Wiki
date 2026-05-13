@@ -1,10 +1,10 @@
 ---
 title: Gateway Session 会话管理架构
 created: 2026-04-08
-updated: 2026-04-08
+updated: 2026-05-13
 type: concept
-tags: [architecture, module, component, gateway, session-store, multi-platform]
-sources: [gateway/session.py, gateway/config.py]
+tags: [architecture, module, component, gateway, session-store, multi-platform, handoff, topic]
+sources: [gateway/session.py, gateway/run.py, gateway/config.py, gateway/platforms/telegram.py, hermes_cli/commands.py]
 ---
 
 # Gateway Session — 网关会话管理架构
@@ -288,6 +288,67 @@ agent 在下一个检查点发现中断信号 → 停止当前轮次 → pending
 | 不同聊天窗口 / 不同用户 | ❌ | 不同 _quick_key，独立线程并行 |
 
 不同 session 的 agent 通过 `run_in_executor` 在线程池中执行，真正并行。
+
+## v0.12.0+ 新增能力（2026-04-30 ~ 2026-05-13）
+
+### `/handoff` — 跨平台 session 转移（878611a + 00ce5f0 + 373c4d6）
+
+`hermes_cli/commands.py` 注册 `CommandDef("handoff", ..., "Session", args_hint="<platform>", cli_only=True)`，把当前 CLI session 实时转交给一个运行中的 messaging platform（Telegram、Discord 等）。
+
+```text
+[CLI session 跑在终端] ─/handoff telegram──► state.db.handoff_state='pending'
+                                              ↓
+                          gateway _handoff_watcher() 后台轮询（2s）
+                                              ↓
+                          claim → 重新绑定到 platform adapter → 投递 handoff notice
+                                              ↓
+                                标记 completed / failed
+```
+
+**核心源码** `gateway/run.py:3708-3795`：
+- `_handoff_watcher(interval=2.0)`：网关启动时 `asyncio.create_task`，循环扫描 `state.db` 里 `handoff_state='pending'` 的 session
+- `_session_db.list_pending_handoffs()` → `claim_handoff(session_id)` → `_process_handoff(row)` → `complete_handoff` / `fail_handoff(session_id, error)`
+- 自动等待目标平台 adapter 就绪后再 dispatch handoff notice，避免空投递
+
+**设计点**：handoff 是**实时迁移**而不仅仅是发"我换平台了"通知——CLI 这边的 working session（消息历史、内存、技能、cron）原样接续到 Telegram 等任意 messaging 端，用户可以从 mac CLI 切到手机继续聊。
+
+### Telegram `/topic` — DM 内多 session 切换（d6615d8 + d35efb9 + 1381c89 + a7683d0）
+
+私聊里通过 Telegram forum topic 机制实现"一个 DM 内多个并行 session"——每个 topic 一个 session，互不污染。
+
+```text
+私聊                             /topic <name>           Hermes 创建 forum topic
+  └── topic A: session 1   ─────────────────► chat_id + message_thread_id 持久化
+  └── topic B: session 2                       到 source.thread_id
+  └── topic C: session 3
+```
+
+**核心源码** `gateway/platforms/telegram.py:419-422 + 514-585`：
+
+```python
+# DM Topics: map of topic_name -> message_thread_id (populated at startup)
+self._dm_topics: Dict[str, int] = {}
+# DM Topics config from extra.dm_topics
+self._dm_topics_config: List[Dict[str, Any]] = self.config.extra.get("dm_topics", [])
+```
+
+routing 走 `_metadata_direct_messages_topic_id()` 和 `telegram_dm_topic_reply_fallback` 标记：
+
+- 真正的 Bot API "Direct Messages topic" 走 `direct_messages_topic_id` metadata
+- Hermes 自创建的 private-chat topic lane 标记 `telegram_dm_topic_reply_fallback`，走 private topic
+- Supergroup forum topics 用 `message_thread_id`
+- **General topic 特殊处理**：发送时拒绝 `message_thread_id=1`，必须 omit，否则消息显示成 General 里的"reply to bubble"
+
+**用户控制**：
+- `/topic <name>` 切换/创建 topic（auth gate 验证）
+- `/topic off` 退出 topic mode 回到主 session
+- `/topic help` 用法
+- DM topic 绑定通过 `switch_session` 持久化，`/new` 时自动 rebind
+- CASCADE 删除：session 删则关联 topic 也清理
+- rename guard：防止 topic 改名导致 session 找不到
+- screenshot debounce：截图通知去抖
+
+详见 `tests/.../telegram_topic_*.py`。
 
 ## 与其他系统的关系
 
