@@ -1,17 +1,19 @@
 ---
 title: Context Compressor 上下文压缩架构
 created: 2026-04-08
-updated: 2026-04-17
+updated: 2026-05-18
 type: concept
 tags: [architecture, module, component, agent, context-compression]
-sources: [agent/context_engine.py, agent/context_compressor.py, run_agent.py, hermes_state.py, plugins/context_engine/__init__.py]
+sources: [agent/context_engine.py, agent/context_compressor.py, agent/conversation_compression.py, run_agent.py, hermes_state.py, plugins/context_engine/__init__.py]
 ---
 
 # Context Compressor — 上下文压缩架构
 
 ## 概述
 
-Context Compressor 位于 `agent/context_compressor.py`，是一个**自动上下文窗口压缩**类。当对话接近模型上下文限制时，使用辅助 LLM（廉价/快速模型）对中间轮次进行结构化摘要，同时保护头部和尾部上下文。
+Context Compressor 位于 `agent/context_compressor.py`（1699 行），是一个**自动上下文窗口压缩**类。当对话接近模型上下文限制时，使用辅助 LLM（廉价/快速模型）对中间轮次进行结构化摘要，同时保护头部和尾部上下文。`ContextCompressor` 算法本体保留在此文件。
+
+**分层说明**：驱动压缩的逻辑已从 `run_agent.py` 抽离——`_compress_context`（`run_agent.py:3705`）现在只是转发器，`compress_context`、`check_compression_model_feasibility`、`replay_compression_warning`、`try_shrink_image_parts_in_messages` 等驱动函数被提取到 `agent/conversation_compression.py`（556 行）。`agent/context_compressor.py` 仍持有 `ContextCompressor` 算法本身。
 
 ### Context Engine 插件化（2026-04-10）
 
@@ -46,6 +48,10 @@ context:
 
 核心理念：**长对话不需要丢弃上下文——用结构化摘要替代旧轮次，保留关键信息。**
 
+### 压缩编排模块（agent/conversation_compression.py）
+
+压缩的编排逻辑已从 `run_agent.py` 抽取到独立模块 `agent/conversation_compression.py`。该模块负责在 agent 循环中决定何时触发压缩、调用 `ContextCompressor`、处理压缩中止与冷却，并向用户呈现警告（如 `⚠ Compression aborted`）。
+
 ## 架构原理
 
 ### 压缩算法
@@ -57,7 +63,7 @@ context:
     ├── Pass 2: Smart Collapse — 旧工具输出替换为信息化单行摘要
     └── Pass 3: tool_call 参数截断 — >500 字符截到 200
   Phase 2: 确定边界
-    保护头部（系统提示+首轮）+ 按 token 预算保护尾部
+    保护头部（系统提示 + protect_first_n 条非系统消息）+ 按 token 预算保护尾部
   Phase 3: LLM 结构化摘要（只处理 Phase 1 瘦身后的中间部分）
   Phase 4: 组装 + 清理孤立的 tool_call/tool_result 配对
 ```
@@ -91,7 +97,16 @@ context:
 
 ```python
 class ContextCompressor:
-    def __init__(self, model, threshold_percent=0.50):
+    def __init__(
+        self,
+        model,
+        threshold_percent=0.50,
+        protect_first_n=3,        # 头部保护：见下文
+        protect_last_n=20,
+        summary_target_ratio=0.20,
+        ...
+    ):
+        self.protect_first_n = protect_first_n
         self.context_length = get_model_context_length(model)
         self.threshold_tokens = int(self.context_length * 0.50)  # 50% 触发
         self.tail_token_budget = int(self.threshold_tokens * 0.20)  # 尾部预算
@@ -99,6 +114,8 @@ class ContextCompressor:
 ```
 
 **缩放设计**：尾部预算和摘要上限都与模型上下文窗口成比例，大窗口模型获得更丰富的摘要。
+
+**`protect_first_n`（v2026.5.x 可配置）**：`compression.protect_first_n`（默认 `3`，`ContextCompressor.__init__` 同名参数）——除恒受保护的系统提示外，额外**逐字保留**的开头非系统消息数量；设为 `0` 则只钉系统提示。`ContextEngine` 也暴露同名字段。
 
 ### 2. 工具输出修剪（三段式预处理）
 
@@ -127,6 +144,10 @@ class ContextCompressor:
 **Pass 3 — tool_call 参数截断**:assistant 消息里如果有 `tool_calls.function.arguments` 长度 > 500,截断到前 200 字符 + `...[truncated]`。修复场景:`write_file(content=50KB)` 这种调用即使工具结果被修剪,参数本身仍然占上下文。
 
 **多模态保护**:所有三个 Pass 都检测 `isinstance(content, list)` 跳过多模态消息,避免破坏图像/音频内容。
+
+#### 剥离历史媒体（_strip_historical_media，#27189）
+
+新增 `_strip_historical_media()`（`context_compressor.py:275-329`），作为 `compress()` 的**最后一步**执行。它以**最新一条带图像的 user 消息**为锚点，把所有更早消息中的图像 part 替换为简短占位文本，使多 MB 的 base64 图像 blob 不必每轮都重新发送。若没有 user 消息带图像，或唯一带图像的是首条消息（前面没有可剥离的内容），则原样返回。仅对被修改的消息做浅拷贝，输入永不被改动。
 
 ### 3. 摘要预算计算
 
@@ -310,6 +331,15 @@ def _generate_summary(self, turns):
 
 **设计考量**(2026-04-14 改进):区分两类失败,`RuntimeError` 表示配置问题走 10 分钟长冷却,其他异常默认是瞬态问题走 60 秒短冷却,让压缩能更快从短暂故障中恢复。
 
+#### 摘要失败时中止压缩（abort-on-summary-failure，#28102/#28117）
+
+`ContextCompressor` 构造函数新增 `abort_on_summary_failure` 标志（默认 `False`，`context_compressor.py:526`）：
+
+- **`True`** — 当摘要生成失败时，压缩**整体中止**：返回原始消息不做改动，并设置 `_last_compress_aborted=True`。对话被**冻结**，直到下一次 `/compress` 或 `/new`。
+- **`False`（legacy 默认）** — 插入一条静态的 "summary unavailable" 占位符，并丢弃中间窗口。
+
+配置标志为 `compression.abort_on_summary_failure`（默认 `False`）。调用方 `agent/conversation_compression.py` 会呈现 `⚠ Compression aborted` 警告；`force` 标志会清除冷却，使得自动压缩中止后用户的 `/compress` 重试能立即生效。
+
 ### 6b. 反颠簸保护（Anti-Thrashing，2026-04-14）
 
 ```python
@@ -381,6 +411,10 @@ def _find_tail_cut_by_tokens(messages, head_end, token_budget):
 ```
 
 关键变化（2026-04-09）：从固定消息数保护改为 **token 预算 + 硬底线 min_tail=3**，对长消息和短消息都更合理。
+
+**头部保护可配置**：保护的头部消息数 `protect_first_n` 现在是可配置项（默认 `3`），表示在系统提示之外额外保护的非系统消息条数，可通过 `config.yaml` 的 `compression.protect_first_n` 调整。
+
+**历史媒体剥离**：压缩完成后会调用 `_strip_historical_media()`，把摘要区域之外的历史多模态内容（base64 图片等）剥离，避免旧截图持续占用上下文 token。
 
 ### 10. 摘要角色选择
 
@@ -497,7 +531,10 @@ compression:
   summary_provider: auto      # 或 openrouter, nous, custom
   summary_model: ""           # 空=自动选择
   threshold_percent: 0.50     # 50% 上下文使用时触发
+  protect_first_n: 3          # 系统提示之外额外保护的非系统头部消息数；0=仅保护系统提示
 ```
+
+> **辅助压缩模型上下文长度检测（2026-05-13 修复）**：当 `auxiliary.compression.provider` 为 `auto` 时，压缩模型复用主模型的 provider/base_url。`_check_compression_model_feasibility` 现在会把 `custom_providers` 转发给辅助压缩模型的 `get_model_context_length()` 调用，使 per-model 的 `context_length` 覆盖（如 NVIDIA NIM 上 minimax-m2.7 的 196608）对辅助模型也生效，不再回退到 models.dev 的值（`fix(auxiliary): forward custom_providers ...`）。
 
 ### 环境变量
 
@@ -599,6 +636,8 @@ Anthropic 的 prompt caching 对系统提示前缀最有效。压缩策略与缓
 
 ## Agent 循环中的触发
 
+驱动压缩的 agent 循环逻辑现在位于 `agent/conversation_loop.py`（不再在 `run_agent.py`）：
+
 ```python
 while api_call_count < max_iterations and iteration_budget.remaining > 0:
     # 检查 token 预算
@@ -606,6 +645,14 @@ while api_call_count < max_iterations and iteration_budget.remaining > 0:
         compressed = compressor.compress(messages, current_tokens=token_usage)
         messages = [system_prompt] + [compressed] + recent_messages
 ```
+
+## v2026.4.30+ 韧性增强
+
+- **未知错误先 retry on main model 再放弃**（PR #16774）—— aux compression 报未知错误时不立即 fail，先用主模型重试一次 summary 再决定是否给用户失败提示
+- **Aux model 失败时主动通知用户**（PR #16775）—— 即使 main fallback 救回，用户也会收到 aux 失败的 surface（之前是静默吞错，导致用户看不到 aux 配置出问题）
+- **多模态 token 估算改用 text-char 总和**（PR #16369）—— `_find_tail_cut_by_tokens` 不再尝试解码图像 base64 来估 token，避免 PIL 内存爆炸；图像按其 placeholder 文字字符数估
+- **Aux 头预算保留 system + tools headroom**（PR #15631）—— aux 模型 binding threshold 时给 system + tools 留空间，防止压缩 prompt 太长触发 aux 自身 ctx 限制
+- **`/compress` 包在 `_busy_command`**（PR #15388）—— 压缩期间阻止用户继续输入，避免 race condition
 
 ## 与其他系统的关系
 
@@ -615,4 +662,4 @@ while api_call_count < max_iterations and iteration_budget.remaining > 0:
 - [[prompt-caching-optimization]] — 压缩策略与 prompt caching 协调
 - [[large-tool-result-handling]] — 工具输出修剪与大型结果处理理念相通
 - [[session-search-and-sessiondb]] — Session 分裂后原始消息保留在 DB 中供检索
-- [[memory-system-architecture]] — 压缩前 flush_memories 和 on_pre_compress 通知
+- [[memory-system-architecture]] — 压缩前 `on_pre_compress` 通知（`flush_memories` 工具已在 v2026.4.30 移除）

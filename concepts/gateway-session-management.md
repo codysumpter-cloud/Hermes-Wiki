@@ -1,19 +1,67 @@
 ---
 title: Gateway Session 会话管理架构
 created: 2026-04-08
-updated: 2026-04-08
+updated: 2026-05-20
 type: concept
-tags: [architecture, module, component, gateway, session-store, multi-platform]
-sources: [gateway/session.py, gateway/config.py]
+tags: [architecture, module, component, gateway, session-store, multi-platform, auto-resume]
+sources: [gateway/session.py, gateway/run.py, gateway/config.py, gateway/platforms/api_server.py]
 ---
 
 # Gateway Session — 网关会话管理架构
 
 ## 概述
 
-Gateway Session 位于 `gateway/session.py`（44KB/1081行），管理网关的**会话生命周期**：会话上下文追踪、消息持久化、重置策略评估、动态系统提示注入。
+Gateway Session 管理网关的**会话生命周期**：会话上下文追踪、消息持久化、重置策略评估、动态系统提示注入。
 
 核心理念：**每个平台/用户/线程的组合都有独立的会话，会话知道它从哪里来、要到哪里去。**
+
+## v0.13.0+ 新增能力
+
+### 1. Gateway 重启自动续约（v0.13.0）
+
+源码：`gateway/run.py:3497-3565`。
+
+```
+gateway 中断（崩溃 / hermes update / source-file reload / 进程被 kill）
+            │
+            ▼
+重启时 startup 期扫描
+            │
+            ▼
+找到"上次跑到一半被进程终止"的 session → 标记 resume_pending
+            │
+            ▼
+下一个 user message 到来时
+            │
+            ▼
+auto-resume：在既有 conversation 上续上，不新建 session
+```
+
+关键引用（注释直引）：
+
+> "Sessions auto-resume when the gateway comes back."
+
+适配器尚未 ready 时（line 3543）会日志 "Skipping auto-resume for %s: adapter not ready" 然后等下次。
+
+### 2. `X-Hermes-Session-Key` HTTP 头（v0.13.0）
+
+源码：`gateway/platforms/api_server.py:780-820`。
+
+```http
+POST /v1/chat/completions
+X-Hermes-Session-Id:  session-abc        # 已有：opt-in 会话连续
+X-Hermes-Session-Key: <opaque-string>    # 新：opt-in 长期记忆作用域
+```
+
+- 在 OpenAI 风格 API 上额外接受 `X-Hermes-Session-Key` 头。
+- 透传给 memory provider 当 **stable session 标识**。
+- **强制鉴权**：仅在已配置 API key 鉴权的 api_server 上接受，否则 line 802 拒绝。
+
+效果：远程 API 用户也能用 hermes 的长期记忆作用域 —— 同一个 key 跨 session 的请求落到同一 memory bucket。
+
+### 3. state.db 唯一权威 + JSONL 退役（详见 [[session-search-and-sessiondb]]）
+
+post-v0.14.0 一组重构砍掉了双存储路径，gateway 现在**只写 SQLite state.db**。详细 commit 列表见 changelog。
 
 ## 架构原理
 
@@ -44,6 +92,8 @@ class SessionSource:
     chat_topic: Optional[str]    # 频道主题
     user_id_alt: Optional[str]   # Signal UUID 等备用 ID
     chat_id_alt: Optional[str]   # Signal 群内部 ID
+    is_bot: bool                 # 消息作者是否为 bot/webhook（Discord）
+    guild_id: Optional[str]      # Discord guild / Slack workspace / Matrix server 作用域
 ```
 
 **多平台适配**：不同平台使用不同的 ID 格式（Telegram 用数字 ID，Signal 用 UUID + 群内部 ID），SessionSource 统一抽象。
@@ -246,6 +296,39 @@ gateway:
 store._entries  # Dict[session_key, SessionEntry]
 ```
 
+## API Server — X-Hermes-Session-Key（v2026.5+）
+
+`gateway/platforms/api_server.py` 提供 OpenAI 兼容端点（`/v1/chat/completions`、`/v1/responses`、`/v1/runs`）。OpenAI 协议**默认无状态**——同一 channel 的多次请求互不关联，长期记忆 provider（Honcho、Hindsight）无法把它们归到同一个用户。
+
+为此引入 **`X-Hermes-Session-Key`** header，提供**稳定 per-channel 标识**，scope 长期记忆，独立于 transcript-scoped `X-Hermes-Session-Id`：
+
+```text
+            X-Hermes-Session-Id      X-Hermes-Session-Key
+            (transcript)             (channel)
+            ┌───────────────┐        ┌───────────────┐
+/new ──>    │  rotates      │        │   stable      │
+            │  per /new     │        │   per channel │
+            │  per agent    │        │   per user    │
+            └───────────────┘        └───────────────┘
+              ↓                        ↓
+       run_agent / SessionDB      Honcho.resolve_session_name
+                                  Hindsight document_id
+```
+
+匹配原生 gateway 的 `session_key` / `session_id` 拆分语义：**一个 channel 一个稳定 key，多个 transcript 在 `/new` 时旋转**。
+
+### `_parse_session_key_header`（line 714）
+
+| 验证 | 限制 |
+|------|------|
+| 需 API-key 启用 | 否则 `X-Hermes-Session-Key` 被 reject |
+| 控制字符 sanitize | 拒非可打印字符 |
+| 长度上限 | 256 chars |
+
+### 端点 honor
+
+`/v1/chat/completions`、`/v1/responses`、`/v1/runs` 三处 `_create_agent` / `_run_agent` 接受 `gateway_session_key` 参数并 pass 给 `AIAgent(gateway_session_key=...)`；JSON / SSE 响应 echo header；`/v1/capabilities` 通告 `session_key_header: "X-Hermes-Session-Key"` 让 client feature-detect。
+
 ## Agent 运行中收到新消息的处理（gateway/run.py line 1920+）
 
 当同一 session 的 agent 正在执行时，用户发新消息的处理逻辑：
@@ -288,6 +371,67 @@ agent 在下一个检查点发现中断信号 → 停止当前轮次 → pending
 | 不同聊天窗口 / 不同用户 | ❌ | 不同 _quick_key，独立线程并行 |
 
 不同 session 的 agent 通过 `run_in_executor` 在线程池中执行，真正并行。
+
+## v0.12.0+ 新增能力（2026-04-30 ~ 2026-05-13）
+
+### `/handoff` — 跨平台 session 转移（878611a + 00ce5f0 + 373c4d6）
+
+`hermes_cli/commands.py` 注册 `CommandDef("handoff", ..., "Session", args_hint="<platform>", cli_only=True)`，把当前 CLI session 实时转交给一个运行中的 messaging platform（Telegram、Discord 等）。
+
+```text
+[CLI session 跑在终端] ─/handoff telegram──► state.db.handoff_state='pending'
+                                              ↓
+                          gateway _handoff_watcher() 后台轮询（2s）
+                                              ↓
+                          claim → 重新绑定到 platform adapter → 投递 handoff notice
+                                              ↓
+                                标记 completed / failed
+```
+
+**核心源码** `gateway/run.py:3708-3795`：
+- `_handoff_watcher(interval=2.0)`：网关启动时 `asyncio.create_task`，循环扫描 `state.db` 里 `handoff_state='pending'` 的 session
+- `_session_db.list_pending_handoffs()` → `claim_handoff(session_id)` → `_process_handoff(row)` → `complete_handoff` / `fail_handoff(session_id, error)`
+- 自动等待目标平台 adapter 就绪后再 dispatch handoff notice，避免空投递
+
+**设计点**：handoff 是**实时迁移**而不仅仅是发"我换平台了"通知——CLI 这边的 working session（消息历史、内存、技能、cron）原样接续到 Telegram 等任意 messaging 端，用户可以从 mac CLI 切到手机继续聊。
+
+### Telegram `/topic` — DM 内多 session 切换（d6615d8 + d35efb9 + 1381c89 + a7683d0）
+
+私聊里通过 Telegram forum topic 机制实现"一个 DM 内多个并行 session"——每个 topic 一个 session，互不污染。
+
+```text
+私聊                             /topic <name>           Hermes 创建 forum topic
+  └── topic A: session 1   ─────────────────► chat_id + message_thread_id 持久化
+  └── topic B: session 2                       到 source.thread_id
+  └── topic C: session 3
+```
+
+**核心源码** `gateway/platforms/telegram.py:419-422 + 514-585`：
+
+```python
+# DM Topics: map of topic_name -> message_thread_id (populated at startup)
+self._dm_topics: Dict[str, int] = {}
+# DM Topics config from extra.dm_topics
+self._dm_topics_config: List[Dict[str, Any]] = self.config.extra.get("dm_topics", [])
+```
+
+routing 走 `_metadata_direct_messages_topic_id()` 和 `telegram_dm_topic_reply_fallback` 标记：
+
+- 真正的 Bot API "Direct Messages topic" 走 `direct_messages_topic_id` metadata
+- Hermes 自创建的 private-chat topic lane 标记 `telegram_dm_topic_reply_fallback`，走 private topic
+- Supergroup forum topics 用 `message_thread_id`
+- **General topic 特殊处理**：发送时拒绝 `message_thread_id=1`，必须 omit，否则消息显示成 General 里的"reply to bubble"
+
+**用户控制**：
+- `/topic <name>` 切换/创建 topic（auth gate 验证）
+- `/topic off` 退出 topic mode 回到主 session
+- `/topic help` 用法
+- DM topic 绑定通过 `switch_session` 持久化，`/new` 时自动 rebind
+- CASCADE 删除：session 删则关联 topic 也清理
+- rename guard：防止 topic 改名导致 session 找不到
+- screenshot debounce：截图通知去抖
+
+详见 `tests/.../telegram_topic_*.py`。
 
 ## 与其他系统的关系
 

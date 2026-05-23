@@ -1,11 +1,17 @@
 ---
 title: Memory System Architecture
 created: 2026-04-07
-updated: 2026-04-29
+updated: 2026-05-07
 type: concept
 tags: [memory, architecture, module]
-sources: [tools/memory_tool.py, agent/memory_manager.py, agent/memory_provider.py, agent/builtin_memory_provider.py, run_agent.py, agent/prompt_builder.py, plugins/memory/__init__.py]
+sources: [tools/memory_tool.py, agent/memory_manager.py, agent/memory_provider.py, agent/builtin_memory_provider.py, run_agent.py, agent/prompt_builder.py, plugins/memory/__init__.py, gateway/platforms/api_server.py]
 ---
+
+> **v2026.5.7 增量**：
+>
+> - **API Server `X-Hermes-Session-Key` header**（#20199）—— 给 memory provider 一个稳定 session 标识，让长期记忆按 session 隔离。源码 `gateway/platforms/api_server.py:5` 注释。
+> - **Hindsight provider** 增加 `update_mode='append'` probe API，跨进程 dedup（@nicoloboschi, #20222）。
+> - `on_session_switch` 钩子已落地（v2026.4.23 引入）：源码确认 `cli.py:5339, 5447, 5583` + `run_agent.py:9540` 调用 `_memory_manager.on_session_switch(...)` —— 在 `/resume` / `/branch` / `/reset` / `/new` / 上下文压缩时通知 provider 刷新缓存。
 
 # 记忆系统架构
 
@@ -223,7 +229,7 @@ class MemoryProvider(ABC):
 | ----------- | -------------------------------------------- |
 | honcho      | `plugins/memory/honcho/` — Honcho AI 辩证式用户建模 |
 | mem0        | `plugins/memory/mem0/`                       |
-| hindsight   | `plugins/memory/hindsight/`                  |
+| hindsight   | `plugins/memory/hindsight/` — long-term memory + knowledge graph + entity resolution |
 | holographic | `plugins/memory/holographic/`                |
 | openviking  | `plugins/memory/openviking/`                 |
 | retaindb    | `plugins/memory/retaindb/`                   |
@@ -231,6 +237,33 @@ class MemoryProvider(ABC):
 | byterover   | `plugins/memory/byterover/`                  |
 
 插件发现机制：扫描 `plugins/memory/` 目录，找到含 `__init__.py` 的子目录，调用 `is_available()` 快速检查。
+
+### Hindsight Provider（v2026.5+ 增强）
+
+`plugins/memory/hindsight/__init__.py`：长期记忆 with 知识图谱、实体消歧、多策略检索。**Cloud + Local 两种模式**。
+
+| Env Var | 默认 | 说明 |
+|---------|------|------|
+| `HINDSIGHT_API_KEY` | — | Cloud API key |
+| `HINDSIGHT_BANK_ID` | `hermes` | memory bank id |
+| `HINDSIGHT_BUDGET` | `mid` | recall 预算: `low`/`mid`/`high` |
+| `HINDSIGHT_API_URL` | `https://api.hindsight.vectorize.io` | API endpoint |
+| `HINDSIGHT_MODE` | `cloud` | `cloud` / `local` |
+| `HINDSIGHT_TIMEOUT` | 120s | API 请求超时 |
+| `HINDSIGHT_IDLE_TIMEOUT` | 300s | local daemon 空闲关闭（0 = 不关）|
+| `HINDSIGHT_RETAIN_TAGS` | — | 逗号分隔的 retain 标签 |
+
+Config fallback 链：`$HERMES_HOME/hindsight/config.json` (profile-scoped) → `~/.hindsight/config.json` (legacy shared)。
+
+**`update_mode='append'` 探测**（`feat(hindsight): probe API for update_mode='append' support, dedupe across processes` / 3082fa0）：
+
+启动时 probe `<api_url>/version`，gate 在 Hindsight ≥ 0.5.0：
+- **支持时**：稳定 session-scoped `document_id = session_id` + `update_mode='append'`，跨进程对同一 session 的 retain 合并到一条文档（不再产生 N 条 process-stamped 重复）
+- **不支持时**：`f"{session_id}-{start_ts}"` 唯一 document_id（resume-overwrite 修复 #6654 仍生效）
+
+`_append_capability_cache: Dict[str, bool]` 按 API URL 缓存能力，进程内 probe 一次。
+
+Plugin manifest hook：`on_session_end`。
 
 ---
 
@@ -286,8 +319,9 @@ elif function_name == "memory":
 
 上下文压缩前
     │
-    ├── flush_memories(messages) → 让模型把重要信息写入 memory
     └── on_pre_compress(messages) → 通知外部 provider 抢救信息
+        # ⚠️ flush_memories 在 v2026.4.30 (refactor #15696) 完全移除——
+        # 同等职责由 background-review fork（每 N 轮自动触发）承担。
 
 会话结束
     │
@@ -474,7 +508,7 @@ session_search(query="nginx 配置")
 - [[memory-system-architecture]] — MemoryStore 核心类详细 API（本页）
 - [[security-defense-system]] — 记忆内容安全扫描
 - [[skills-and-memory-interaction]] — 技能与记忆的交互决策树
-- [[context-compressor-architecture]] — 压缩前 flush_memories 和 on_pre_compress
+- [[context-compressor-architecture]] — 压缩前 `on_pre_compress`（`flush_memories` 已在 v2026.4.30 移除，由 background-review fork 替代）
 - [[prompt-caching-optimization]] — 冻结快照如何保护 prefix cache
 - [[session-search-and-sessiondb]] — Session Search 工具（FTS5 + LLM 摘要）
 
@@ -485,6 +519,6 @@ session_search(query="nginx 配置")
 - `agent/memory_provider.py` — MemoryProvider ABC 接口（232 行）
 - `agent/builtin_memory_provider.py` — 内置 Provider（114 行）
 - `plugins/memory/` — 8 个外部 Provider 插件
-- `run_agent.py` — Agent 集成（工具拦截、prefetch、sync、flush）
+- `run_agent.py` — Agent 集成（工具拦截、prefetch、sync；`flush_memories` 工具已删除）
 - `agent/prompt_builder.py` — MEMORY_GUIDANCE 系统提示
 - `tools/session_search_tool.py` — Session Search 工具（FTS5 + LLM 摘要，505 行）

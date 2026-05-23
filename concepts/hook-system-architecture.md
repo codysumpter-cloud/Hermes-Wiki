@@ -1,11 +1,23 @@
 ---
 title: Hook 系统架构
 created: 2026-04-08
-updated: 2026-04-18
+updated: 2026-05-17
 type: concept
 tags: [architecture, module, extensibility, mcp, plugins]
-sources: [gateway/hooks.py, hermes_cli/plugins.py, model_tools.py, run_agent.py]
+sources: [gateway/hooks.py, hermes_cli/plugins.py, model_tools.py, run_agent.py, gateway/platform_registry.py]
 ---
+
+> **v2026.5.7 新增钩子**：
+>
+> | 钩子 | 源码 | 用途 |
+> |------|------|------|
+> | **`transform_llm_output`**（#21235） | `run_agent.py:14279`，名见 `hermes_cli/plugins.py:86` | 在 LLM 输出进入对话前 reshape / 过滤；上下文窗口压缩、内容过滤 |
+> | **`env_enablement_fn`**（#21331） | 平台插件注册时 | 决定平台是否在当前环境启用（基于 env vars） |
+> | **`cron_deliver_env_var`**（#21331） | 平台插件注册时 | cron 投递前需要哪些 env var |
+>
+> 后两个把 IRC、Teams、Google Chat 这样的**插件平台**纳入统一接口，不再需要在核心代码 if/elif。
+>
+> **`register_platform`** API 在 `hermes_cli/plugins.py:476` —— 插件注册新消息平台的入口。
 
 # Hook 系统架构
 
@@ -127,6 +139,15 @@ class PluginContext:
         """注册生命周期钩子回调"""
 ```
 
+##### PluginContext 扩展 facade
+
+| Facade | 用途 |
+|---|---|
+| `register_tool(..., override=True)` | `override=True` 可替换已有的内置工具 |
+| `ctx.llm` | property,返回 `agent.plugin_llm.PluginLlm`,供插件做 host 所有的 LLM 调用 |
+| `ctx.register_web_search_provider()` | 注册 web 搜索/提取/爬取 provider |
+| `ctx.register_browser_provider()` | 注册云端浏览器 provider |
+
 #### PluginManager
 
 ```python
@@ -154,20 +175,46 @@ class PluginManager:
                        #     ctx.register_hook(...)
 ```
 
-#### 生命周期钩子
+#### 生命周期钩子（v0.13.0+）
+
+`hermes_cli/plugins.py:128 VALID_HOOKS`：
+
+完整 `VALID_HOOKS` 集合（`hermes_cli/plugins.py:128-168`，v0.13.0）：
 
 ```python
+# hermes_cli/plugins.py:128-168 — 截至 v0.13.0
 VALID_HOOKS = {
-    "pre_tool_call",      # 工具调用前
-    "post_tool_call",     # 工具调用后
-    "pre_llm_call",       # LLM 调用前
-    "post_llm_call",      # LLM 调用后
-    "pre_api_request",    # API 请求前
-    "post_api_request",   # API 请求后
-    "on_session_start",   # 会话开始
-    "on_session_end",     # 会话结束
+    "pre_tool_call",            # 工具调用前；可 {"action": "block", "message": ...}
+    "post_tool_call",           # 工具调用后
+    "transform_terminal_output",# 终端输出预过滤
+    "transform_tool_result",    # 工具结果转换
+    "transform_llm_output",     # ★ v0.13.0：LLM 回复落地前最后一道；first non-None string wins
+    "pre_llm_call",             # LLM 调用前
+    "post_llm_call",            # LLM 调用后
+    "pre_api_request",          # API 请求前
+    "post_api_request",         # API 请求后
+    "on_session_start",         # 会话开始
+    "on_session_end",           # 会话结束
+    "on_session_finalize",      # finalize（落盘）
+    "on_session_reset",         # /reset
+    "subagent_stop",            # delegate / MoA 子 agent 停止
+    "pre_gateway_dispatch",     # gateway 入站 message 预处理（可 skip / rewrite / allow）
+    "pre_approval_request",     # dangerous-command approval 弹出前
+    "post_approval_response",   # approval 选择后（once/session/always/deny/timeout）
 }
 ```
+
+#### `transform_llm_output`（v0.13.0 新 hook）
+
+签名：
+
+```python
+def transform_llm_output(text: str, **ctx) -> Optional[str]:
+    """Return a string to replace the response, or None / "" to pass through.
+    First non-None string from any plugin wins."""
+```
+
+调度点：`run_agent.py:15510-15529`。异常被 catch 不破坏 turn。用途：vocabulary / personality 转换、内容过滤、context-window reducer。
 
 #### 钩子调用
 
@@ -222,6 +269,10 @@ def my_pre_tool_call(tool_name, args):
 - `run_agent.py _invoke_tool`(顺序/并发两路)
 
 为避免双重触发,`handle_function_call()` 支持 `skip_pre_tool_call_hook=True`:当 `run_agent.py` 已经在外层检查过,再调 `handle_function_call` 时传这个 flag 跳过二次检查。
+
+#### 线程级工具白名单（2026-05-13）
+
+`hermes_cli/plugins.py` 新增 `set_thread_tool_whitelist` / `clear_thread_tool_whitelist`。在当前线程上设置后,`get_pre_tool_call_block_message()` 会限制只有白名单内的工具能通过,非白名单工具被一条可配置的 deny 消息阻止。这复用了 `set_approval_callback`(`tools/terminal_tool.py`)的 per-thread 模式。典型用途:`_spawn_background_review` 在运行时拒绝非 memory/非 skill 工具,同时仍继承父 agent 的完整 tools schema 以保持 prefix-cache 一致性。
 
 **典型用途**:
 - 安全 policy(阻止危险命令)
@@ -376,6 +427,27 @@ def my_command_hook(event_type, context):
 
 决策类型：`deny` / `handled` / `rewrite` / `allow`，在核心处理前拦截。向后兼容——fire-and-forget 遥测钩子仍走 `emit()`。
 
+### v0.12.0+ — `ctx.llm`：插件直接调用宿主模型（5aa755e）
+
+新增 `PluginContext.llm` property（`hermes_cli/plugins.py:299-313`），插件可以直接用宿主 agent 的活跃模型 + 认证跑 chat / structured completion，**无需自带 provider key**：
+
+```python
+def register(ctx):
+    def my_handler(event_type, context):
+        reply = ctx.llm.chat(
+            messages=[{"role": "user", "content": "summarize this"}],
+            # 可选：在 plugins.entries.<plugin_id>.llm.* 里覆盖 model/agent_id/auth
+        )
+```
+
+**实现要点**（`agent/plugin_llm.PluginLlm`）：
+
+- Lazy 构造：访问 `ctx.llm` 时才实例化 `PluginLlm(plugin_id=manifest.key or manifest.name)`
+- **Fail-closed override**：默认用 host 当前模型，插件想改 model / agent_id / auth profile 必须用户在 `plugins.entries.<plugin_id>.llm.*` 配置里**显式开启**才生效——避免恶意插件偷偷换 key 把账单挪到用户头上
+- 共享 host 的 auxiliary client / credential pool，命中相同的 prompt cache 边界
+
+适合做 dashboard 插件（如 hermes-achievements）需要简短分类/摘要时用，省去 plugin 自己写一遍 provider 适配。
+
 ### Dashboard 插件系统
 
 插件可以向 Web Dashboard 添加自定义标签页：
@@ -393,6 +465,24 @@ def my_command_hook(event_type, context):
 - 支持可选的后端 API 路由自动挂载
 
 同时新增 **Dashboard 主题系统**，支持实时切换。
+
+## v2026.5.x 插件增强
+
+`hermes_cli/plugins.py` 的 `VALID_HOOKS` 新增四个钩子：
+
+| 钩子 | 时机 |
+|---|---|
+| `transform_llm_output` | 改写 LLM 输出 |
+| `pre_gateway_dispatch` | gateway 分发消息前 |
+| `pre_approval_request` | 危险操作审批请求前 |
+| `post_approval_response` | 审批响应后 |
+
+其他新增能力：
+
+- **`ctx.llm`** — `PluginContext` 的 `llm` 属性惰性构建 `agent/plugin_llm.py`（1046 行）的门面，提供 `complete` / `complete_structured` 及 async 版本，可在插件内直接发起 LLM 调用；provider/model 覆盖受信任门控。
+- **工具覆盖**：`register_tool(..., override=True)` 可替换内置工具（closes #11049）。
+- **Provider 注册门面**：`ctx.register_web_search_provider()`（详见 [[web-tools-architecture]]）、`ctx.register_video_gen_provider()`、`ctx.register_platform()`（详见 [[messaging-gateway-architecture]]）。model-provider 也以插件形式存在（`kind: model-provider`，详见 [[smart-model-routing]]）。
+- **Bundled observability 插件**：`plugins/observability/langfuse/` 通过 `pre/post_api_request`、`pre/post_llm_call`、`pre/post_tool_call` 钩子上报 trace。
 
 ## 与其他系统的关系
 

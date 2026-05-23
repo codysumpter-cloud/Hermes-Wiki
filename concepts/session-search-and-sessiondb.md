@@ -1,17 +1,42 @@
 ---
 title: Session Search and SessionDB
 created: 2026-04-07
-updated: 2026-04-18
+updated: 2026-05-20
 type: concept
-tags: [session-search, session-store, memory, architecture]
-sources: [hermes-agent 源码分析 2026-04-07]
+tags: [session-search, session-store, memory, architecture, state-db]
+sources: [hermes_state.py, tools/session_search_tool.py]
 ---
 
 # 会话搜索与 SessionDB
 
 ## 概述
 
-`session_search` 提供**跨会话的对话回忆能力**，使用 SQLite FTS5 全文搜索 + LLM 摘要生成。
+`session_search` 提供**跨会话的对话回忆能力**，使用 SQLite FTS5 全文搜索。该工具经 #27590 重写为 **single-shape 工具**，**不做任何 LLM 调用** — 每种模式都直接从 DB 返回真实消息（`tools/session_search_tool.py:23`）。
+
+## v0.13.0+ 起：SQLite `state.db` 是网关消息的**唯一权威**
+
+post-v0.14.0 一系列 commit 把 gateway 历史上的双存储路径砍掉了：
+
+```
+33a3cf532  docs(sessions): state.db is canonical for gateway messages
+9d793e8e5  docs(session-log): state.db is canonical; ~/.hermes/sessions/ is legacy
+b4b118c20  refactor(gateway): drop _append_to_jsonl from mirror
+351fdcc6e  refactor(gateway): stop writing JSONL in append_to_transcript / rewrite_transcript
+971cfaa38  refactor(yuanbao): migrate recall to load_transcript()
+024a8e3ee  refactor(gateway): drop JSONL fallback in load_transcript
+1d27be0ff  test(gateway): pin SQLite-only load_transcript behaviour
+ce2678518  refactor(session-log): delete _save_session_log and all callers
+eeb747de2  feat(sessions): opt-in per-session JSON snapshot writer
+```
+
+含义：
+
+- **网关消息 transcript 的权威来源**永远是 `~/.hermes/state.db`。
+- `~/.hermes/sessions/*.json` 现在是 **legacy**，hermes **不再主动写**。已有目录不会被自动清理。
+- 如果还想拿 JSON 快照（外部工具消费），打开**opt-in per-session JSON snapshot writer**。
+- `platform_message_id` 现在持久化到 `state.db`（commit `31a0100`），yuanbao 等平台用此精确按消息 ID 召回。
+
+> 这是 v2026.4 一直在推进的 cleanup：之前每次写消息都要 transcribe 到 SQLite + JSONL 两份，存在不一致风险（JSONL truncate / 锁竞争）。现在只有一处真理来源。
 
 ## SessionDB
 
@@ -33,18 +58,22 @@ class SessionDB:
 
 ## FTS5 搜索
 
-使用 SQLite 的 FTS5 扩展实现高效全文搜索：
+使用 SQLite 的 FTS5 扩展实现高效全文搜索。Hermes 维护**两张** FTS5 虚拟表（`hermes_state.py`）：
 
 ```sql
--- FTS5 虚拟表（索引 messages 表）
-CREATE VIRTUAL TABLE messages_fts USING fts5(
-    content,
-    content=messages,
-    content_rowid=id
-);
+-- 主表（unicode61 tokenizer，覆盖 content + tool_name + tool_calls）
+CREATE VIRTUAL TABLE messages_fts USING fts5(...);
 
--- 搜索查询
-SELECT * FROM messages_fts WHERE messages_fts MATCH 'elevenlabs OR baseten OR funding';
+-- 触发器索引内容：
+-- COALESCE(content, '') || ' ' || COALESCE(tool_name, '') || ' ' || COALESCE(tool_calls, '')
+```
+
+```sql
+-- Trigram 表（v2026.4.30+，CJK / 泰语等 substring 查询）
+CREATE VIRTUAL TABLE messages_fts_trigram USING fts5(
+    content,
+    tokenize='trigram'
+);
 ```
 
 搜索语法支持：
@@ -53,36 +82,66 @@ SELECT * FROM messages_fts WHERE messages_fts MATCH 'elevenlabs OR baseten OR fu
 - **布尔逻辑** — `python NOT java`
 - **前缀匹配** — `deploy*`
 
+### Trigram FTS5 索引（CJK 搜索，v2026.5.x）
+
+默认的 `unicode61` tokenizer 会把中日韩文本切成**单字** token，破坏短语/子串匹配。`hermes_state.py` 新增 `messages_fts_trigram` 虚拟表（`FTS_TRIGRAM_SQL`，`tokenize='trigram'`），用重叠的 3 字节序列建索引，使**任意脚本**的子串查询都能命中——取代了原来对 CJK 的 `LIKE` 回退。
+
+```sql
+CREATE VIRTUAL TABLE messages_fts_trigram USING fts5(
+    content, ..., tokenize='trigram'
+);
+```
+
+schema 迁移 **v10** 建表并回填存量行，**v11** 重新索引以覆盖 `tool_name` / `tool_calls`。配套 insert/delete/update 触发器镜像 `messages` 表。
+
 ## Session Search 工具
 
+`session_search` 是一个 **single-shape 工具**，没有显式的 `mode` 参数 —— 三种模式由传入的参数推断（`tools/session_search_tool.py:378-390`）：
+
 ```python
-def session_search(query: str, role_filter: str = None, limit: int = 3):
+def session_search(
+    query: str = "",
+    role_filter: str = None,   # 默认 "user,assistant"
+    limit: int = 3,            # clamp 到 [1,10]
+    session_id: str = None,
+    around_message_id: int = None,
+    window: int = 5,           # clamp 到 [1,20]
+    sort: str = None,          # "newest" / "oldest"
+):
     """
-    搜索过去的对话会话
-    
-    两种模式：
-    1. 无 query — 浏览最近的会话（标题、预览、时间戳）
-    2. 有 query — 关键词搜索 + LLM 摘要生成
+    Discovery: 传 query
+    Scroll:    传 session_id + around_message_id
+    Browse:    什么都不传
     """
 ```
 
-### 模式 1: 浏览最近会话
+### 模式 1: DISCOVERY（传 `query`）
 
 ```text
-调用无参数 → 返回最近会话列表：
-- 会话标题
-- 内容预览
-- 时间戳
+FTS5 搜索 → 按 lineage root 去重 → 返回 top-N 命中：
+- snippet
+- 锚点前后 ±5 条消息窗口（锚点被标记）
+- bookend_start（会话最前 3 条 user+assistant 消息）
+- bookend_end（最后 3 条）
+无 LLM 摘要，零 LLM 成本
+```
+
+### 模式 2: SCROLL（传 `session_id` + `around_message_id`）
+
+```text
+以锚点为中心返回 ±window 条消息（clamp 到 [1,20]，默认 5）：
+- 拒绝当前会话 lineage 内的锚点
+- 透明地把 parent 重绑定到 child lineage
+- 无 FTS5，无 bookends
+```
+
+### 模式 3: BROWSE（不传参数）
+
+```text
+按时间倒序返回最近会话（标题、预览、时间戳）：
+- 排除 child / delegation 会话
+- 排除 HERMES_SESSION_SOURCE=tool 的会话
 零 LLM 成本，即时返回
-```
-
-### 模式 2: 关键词搜索
-
-```text
-调用带 query → FTS5 搜索 → LLM 生成摘要：
-- 搜索匹配的消息
-- LLM 总结会话内容
-- 返回结构化的摘要
 ```
 
 ## 搜索建议
@@ -132,9 +191,9 @@ SessionDB.save_session()
   ↓
 FTS5 全文搜索
   ↓
-LLM 生成摘要
+按 lineage root 去重 + 抽取消息窗口与 bookends
   ↓
-返回结构化结果
+返回真实消息（无 LLM 步骤）
 ```
 
 ## Session 删除与修剪

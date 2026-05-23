@@ -122,3 +122,57 @@
   - 源码: gateway/hooks.py (170行), hermes_cli/plugins.py (609行)
   - 核心内容: Gateway Hooks 事件驱动(8种事件+通配符)，Plugin System 三级来源(用户/项目/pip)，PluginContext API(工具注册/消息注入/CLI命令/钩子)，缓存友好上下文注入
 - index.md 更新为 37 页
+
+## [2026-05-21] update | 同步 hermes-agent v0.12.0 / v0.13.0 / v0.14.0（~2700 commits 增量）
+- 对比基准: 上次跟踪 v2026.4.23（v0.11.0），最新 main 跑到 v2026.5.16（v0.14.0）+ 5 天补丁
+- 新建 3 个 changelog（按 release 切分，所有引用 file:line 经源码核对）:
+  - **changelog/2026-04-30-update.md** — v0.12.0 Curator Release（1096 commits）
+    - 验证: agent/curator.py(1781行), hermes_cli/curator.py(598行), tools/lazy_deps.py, plugins/platforms/teams, gateway/platforms/yuanbao*.py, agent/lmstudio_reasoning.py, tools/environments/vercel_sandbox.py(654行)
+  - **changelog/2026-05-07-update.md** — v0.13.0 Tenacity Release（864 commits, 13 P0/36 P1 closures）
+    - 验证: hermes_cli/kanban.py(2677行)+kanban_db.py(6286行), tools/kanban_tools.py:547-580, hermes_cli/goals.py(762行), agent/system_prompt.py:34,120 KANBAN_GUIDANCE, providers/base.py:39 ProviderProfile ABC, plugins/model-providers/, plugins/platforms/google_chat/, tools/checkpoint_manager.py:340-362 v2 layout, gateway/run.py:3543,3565 auto-resume, tools/cronjob_tools.py:322-372 no_agent mode, hermes_cli/config.py:4439,4482 redaction ON, gateway/platforms/discord.py:508 dm_role_auth_guild
+  - **changelog/2026-05-16-update.md** — v0.14.0 Foundation Release（808 commits, 12 P0/50 P1 closures）
+    - 验证: pyproject.toml:6 hermes-agent PyPI, tools/lazy_deps.py(613行), hermes_cli/auth.py:201 SuperGrok OAuth, agent/model_metadata.py:217 grok-4.3 1M, hermes_cli/proxy/, tools/x_search_tool.py, tools/microsoft_graph_*.py, plugins/platforms/{teams,line,simplex}, agent/lsp/(11 modules), tools/clarify_gateway.py, gateway/platforms/discord.py:3683 history backfill
+- 更新 14 个核心 concept 页面（按影响度排序）:
+  - messaging-gateway-architecture: 22 平台（+Teams/Google Chat/LINE/SimpleX）, allowlist 全平台, Discord guild-scoped, WhatsApp dm_policy, [[as_document]], clarify 按钮
+  - multi-agent-architecture: 新增第 4/5 机制 —— 持久化 Kanban + /goal Ralph loop；/handoff/steer/queue 控制面
+  - skills-system-architecture: Curator 升格为后台 agent（12 子命令）+ bump_use 多调用路径 + consolidated vs pruned 分类
+  - smart-model-routing: GMI/Azure Foundry/LM Studio/Tencent Tokenhub/MiniMax OAuth(v0.12) + xAI SuperGrok OAuth/grok-4.3 1M/NovitaAI/Codex app-server/Qwen Cloud rename(v0.14) + hermes proxy + Pareto min_coding_score
+  - prompt-caching-optimization: prompt_caching.cache_ttl 配置, 跨 session 1h Claude prefix cache
+  - security-defense-system: v0.13 8 P0 closures + v0.14 sudo brute-force/dangerous-command bypass/tool error sanitization
+  - web-tools-architecture: SearXNG, Brave free, DDGS, 按能力拆分 backend, x_search, video_analyze, vision_analyze pixel passthrough, video_generate 可插拔
+  - browser-tool-architecture: 180x CDP 持久 WebSocket, cloud metadata SSRF 硬拒
+  - voice-mode-architecture: TTS provider registry + Piper 本地, xAI Custom Voices voice cloning
+  - mcp-and-plugins: MCP SSE transport + OAuth forwarding, transform_llm_output hook, ctx.llm + tool_override
+  - cron-scheduling: no_agent watchdog 模式, prompt-injection 扫描
+  - interrupt-and-fault-tolerance: Checkpoints v2 (1638行, max_snapshots pruning, disk guardrails), gateway auto-resume
+  - cli-architecture: hermes -z / proxy / acp / curator{archive,prune,list-archived} / kanban 子命令，/goal /subgoal /handoff /steer /queue /reload /reload-skills /mouse 斜杠，PyPI + Windows beta + OSC8 + 16 locale i18n
+  - terminal-backends: lazy-install Modal/Daytona/Vercel SDK
+  - code-execution-sandbox: Delta lint(v0.13) → LSP 语义诊断(v0.14, agent/lsp/ 11 modules) → file-mutation footer 三层后写校验
+  - provider-transport-architecture: ProviderProfile ABC + plugins/model-providers/ 20+ provider 插件化
+  - auxiliary-client-architecture: auxiliary.curator 统一配置, auxiliary.prompt_caching.cache_ttl
+- README.md: badge 升级 v2026.5.16, changelog 索引 5→8, 跟踪版本 v2026.4.23→v2026.5.16, 最后更新日期 2026-04-29→2026-05-21
+- 验证基线: /tmp/hermes-agent clone at 2026-05-21（HEAD 0ce12a9），git tag v2026.5.16 / v2026.5.7 / v2026.4.30 三个 release notes 全文核对
+
+## [2026-05-23] update | 合并 21 个 daily sync 分支 + 清理重复命名
+
+合并所有 claude/kind-gates-* 定时任务分支到 master（2026-05-02 ~ 2026-05-22 共 21 次 daily sync）：
+- 策略: `git merge --no-ff -X theirs`（newer 分支胜出，对齐 hermes-agent 最新源码）
+- 保留 21 个 merge commits，每个对应一次日常 snapshot
+
+清理重复命名（同一概念多种文件名 → 保留最新版本）：
+- Ralph Loop: 6 个变体 → `goal-and-ralph-loop.md`（删除 persistent-goals-ralph-loop / persistent-goals / goals-and-ralph-loop / goal-loop-architecture / goal-loop-and-steering）
+- Kanban: 8 个变体 → `kanban-multi-agent-board.md`（删除 kanban-multi-profile-board / kanban-collaboration-board / kanban-multi-agent / kanban-architecture / kanban-system / kanban-orchestration / multi-agent-kanban）
+- i18n: 2 个变体 → `i18n-and-locales.md`（删除 i18n-localization）
+- Provider plugin: 2 个变体 → `provider-plugin-system.md`（删除 provider-profile-plugins）
+
+新增页面（来自定时任务，已源码核对仍然有效）:
+- tool-loop-guardrails (v0.12.0)
+- checkpoints-architecture (v0.13.0)
+- lsp-integration (v0.14.0)
+- i18n-and-locales (v0.13.0)
+- provider-plugin-system (v0.13/v0.14)
+- hermes-proxy (v0.14)
+- kanban-multi-agent-board (v0.13+)
+- goal-and-ralph-loop (v0.13/v0.14)
+
+最终状态：45 概念页 + 2 实体页 + 26 changelog，跟踪 hermes-agent v0.14.0

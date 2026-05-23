@@ -1,23 +1,31 @@
 ---
 title: Hermes 多 Agent 架构
 created: 2026-04-08
-updated: 2026-04-18
+updated: 2026-05-22
 type: concept
-tags: [architecture, module, agent, delegation, concurrency]
-sources: [tools/delegate_tool.py, tools/mixture_of_agents_tool.py, run_agent.py]
+tags: [architecture, module, agent, delegation, concurrency, kanban]
+sources: [tools/delegate_tool.py, tools/mixture_of_agents_tool.py, run_agent.py, hermes_cli/kanban_db.py, plugins/kanban/]
 ---
 
 # Hermes 多 Agent 架构
 
 ## 概述
 
-Hermes 的多 Agent 能力分为**三种运行时机制**，全部在 Agent 对话过程中触发，不涉及外部脚本或离线工具：
+Hermes 的多 Agent 能力分为 **5 种运行时机制**：4 种 in-process（单 session 内）+ 1 种跨 session 持久化（Kanban）：
 
-| 机制                    | 触发方式                  | 用途                   |
-| --------------------- | --------------------- | -------------------- |
-| **Delegate Task**     | LLM tool call（模型自主决定） | 并行子任务，最多 3 路         |
-| **Mixture of Agents** | LLM tool call（模型自主决定） | 多模型协同推理              |
-| **Background Review** | 系统计数器自动触发             | 后台提炼经验 → 创建/改进 skill |
+| 机制                    | 触发方式                  | 范围 | 用途                   |
+| --------------------- | --------------------- | ---- | -------------------- |
+| **Delegate Task**     | LLM tool call（模型自主决定） | 单 session | 并行子任务，最多 3 路 |
+| **Mixture of Agents** | LLM tool call（模型自主决定） | 单 session | 多模型协同推理 |
+| **Background Review** | 系统计数器自动触发             | 单 session | 后台提炼经验 → 创建/改进 skill |
+| **send_message**      | LLM tool call         | 跨 Profile（同进程网关） | 给其他 profile 发消息 |
+| **Kanban**            | dispatcher tick（每 60s） | **跨 session / restart / profile** | 持久化任务板，多 worker 协作 |
+
+v0.13+ 引入 [[kanban-multi-agent-board]] 作为**第 5 种**机制：把"AI 团队真正能跑完的项目板"做成一等公民。Kanban 不在本页详述，专门有页。
+
+> **何时选 Kanban，何时选 in-process？**
+> 单回合就能完成、最多并发 3 个子任务 → delegate_task。
+> 长跑迭代、需重启不丢、需多 profile → Kanban。
 
 ## 触发机制
 
@@ -464,11 +472,75 @@ def interrupt(self, message):
 | Mixture of Agents | `asyncio.gather`（异步协程收集） | 单线程异步 | 不落盘，内存 list |
 | Background Review | 守护线程 fire-and-forget | 单独守护线程 | 直接写 skill/memory 文件 |
 
-**一句话：全部在单进程内完成，没有任何进程间通信。**
+**一句话：会话内的三种机制全部在单进程内完成，没有任何进程间通信。** 唯一的例外是下面第七节的 Kanban 编排层——它是一个独立的**跨进程**多 Agent 机制。
 
 ---
 
-## 五、迭代预算系统
+## 七、Kanban 编排层 — 跨进程多 Agent
+
+前面六节描述的都是**会话内**机制。Kanban 编排器是一个**独立的、跨进程的**多 Agent 层：gateway dispatcher 在每个 tick 把任务从看板派发出去，并**spawn 独立的 worker 子进程**（`sys.executable -m hermes_cli.main`）来执行任务——这是真正的进程间编排，不是线程或协程。
+
+### 相关文件
+
+```
+hermes_cli/kanban.py             # CLI 入口与看板命令
+hermes_cli/kanban_db.py          # 看板 SQLite 存储、任务分解、worker spawn
+hermes_cli/kanban_decompose.py   # gateway dispatcher 自动分解路径
+hermes_cli/kanban_diagnostics.py # 看板健康诊断规则
+hermes_cli/kanban_specify.py     # 任务规格化
+```
+
+### 自动分解（auto-decomposition）
+
+新建的 triage 任务会被自动分解成可执行的 workgraph：
+
+- **`kanban.auto_decompose`**（默认 `True`）— 是否启用自动分解
+- **`kanban.auto_decompose_per_tick`**（默认 `3`）— 每个 dispatcher tick 最多分解的任务数
+- `decompose_triage_task`（`kanban_db.py:2780`）把 triage 任务扇出成子任务，根据子任务描述把它们路由到对应的 specialist profile，根任务保留为父节点；所有子任务 `done` 后根任务升级为 `ready`。
+
+### Step-0 Profile 发现
+
+编排器不使用 hardcoded 的 profile 名单，而是采用 **Step-0 profile discovery**：`_build_roster`（`kanban_decompose.py:214`）读取配置好的 profile roster，动态决定可用的 specialist profile 集合。
+
+### 诊断与并发控制
+
+- **`stranded_in_ready` 诊断**（`kanban_diagnostics.py:571`）：检测长期卡在 `ready` 状态没有 worker 接走的任务，阈值 `stranded_threshold_seconds`（默认 `1800` 秒 = 30 分钟）。
+- **`max_spawn`** 是一个**实时并发上限**（live concurrency cap），不是每 tick 的 spawn 预算——它限制的是同时运行的 worker 数量。
+
+---
+
+## 五、Goal Loop —— Ralph 循环
+
+`/goal <text>` 进入 *持续目标* 模式：每个 turn 结束后辅助模型判官评判是否完成，未完成则注入续转 prompt（普通 user message），直到 done / budget / pause / cleared / 新用户消息抢占。
+
+要点（**不**同于 Delegate / MoA / Background Review）：
+
+- **不 fork**：全程在主 session 里跑，prompt cache 持续命中
+- **不改 system prompt / toolset**：续转 prompt 是 user message 追加
+- **跨 turn 持久**：`state_meta` 表 `goal:<session_id>`，`/resume` 接续
+- **fail-OPEN**：judge 出错 = continue，turn budget (默认 20) 是最后保险
+
+详见 [[goal-loop-architecture]]。
+
+---
+
+## 六、Kanban —— 持久协作看板
+
+v0.13.0 引入的 **durable multi-profile board**（`hermes_cli/kanban*.py` + `tools/kanban_tools.py`，~10.9k 行）。
+
+唯一**跨 session、跨 profile**的协作机制：
+
+- SQLite 存储 (`<root>/kanban.db`)
+- dispatcher 守护进程从 `ready` 队列 spawn worker 子进程（独立 hermes 进程）
+- worker 通过 9 个 `kanban_*` tool 把状态写回 DB
+- 心跳 + reclaim + zombie detection + per-task `max_retries` + hallucination gate
+- dashboard / `/kanban` 斜杠 / `hermes kanban` CLI 三个面绕过 agent 直接操作
+
+详见 [[kanban-architecture]]。
+
+---
+
+## 七、迭代预算系统
 
 所有多 Agent 机制共享的资源管理层。
 
@@ -601,18 +673,99 @@ Discord 还有**多 bot 过滤**：消息 @了其他 bot 但没 @自己时自动
 
 详见 → [[configuration-and-profiles]]
 
+## 四、持久化 Kanban —— 多 Worker 协作板（v0.13.0+）
+
+**v0.13.0 Tenacity Release** 把 Kanban 重做成**真正持久、跨 Profile、可靠**的多 Agent 工作板。源码：`hermes_cli/kanban.py`（2677 行）+ `hermes_cli/kanban_db.py`（6286 行）+ `tools/kanban_tools.py` + `plugins/kanban/`。
+
+### 触发与使用
+
+```
+hermes kanban add "task title" --workspace path/to/repo --profile worker
+hermes kanban dispatch                 # 一遍 reclaim 过期 → promote ready → spawn worker
+hermes dashboard                       # 视化看板
+/kanban …                              # 斜杠命令（CLI/gateway 也用）
+```
+
+### Worker 生命周期不变量
+
+| 机制 | 验证位置 |
+|------|---------|
+| **Heartbeat + TTL** | `tools/kanban_tools.py:547-580` `_handle_heartbeat()`；claim 过期 → 自动 reclaim |
+| **Zombie 检测** | macOS/Linux 各自路径，detect darwin zombie workers |
+| **Exit-without-complete 自动 block** | dispatcher 把 abnormal exit 计入失败 |
+| **Per-task `max_retries`** | `hermes_cli/kanban_db.py:647-652` —— `max_retries=1` 首败 block；`max_retries=3` 允许 2 次重试。`hermes_cli/kanban.py:1281-1306` `--max-retries` CLI flag |
+| **Task ownership 强制** | worker 必须拥有任务才能 reclaim/转移；destructive tool 调用前校验 |
+| **Hallucination gate** | `plugins/kanban/dashboard/plugin_api.py:217` —— "我做完了"但数据库无证据 → `completion_blocked_hallucination` 状态进入恢复 |
+
+### KANBAN_GUIDANCE —— Lifecycle Contract
+
+`agent/system_prompt.py:34,120` 把 `KANBAN_GUIDANCE` 字符串注入系统提示。所有 worker 看到的"我属于一块板、必须从 claim → working → complete/block 的生命周期约束"都来自这一处，`hermes_cli/kanban_db.py:5213,5368,5377` 反复强调"已经在系统提示里了，工具调用不再 echo"。
+
+### 多 Project / 跨 Profile 共享
+
+一台机器、多块板、跨 profile 共享 board / workspace / worker log。Dashboard inline create 表单含 workspace kind + path、home-channel 通知开关、tenant 过滤。Generic diagnostics engine 统一识别 task 困扰信号。
+
+## 五、`/goal` Ralph Loop —— 跨轮持久目标（v0.13.0+）
+
+源码：`hermes_cli/goals.py`（762 行）+ `hermes_cli/commands.py:105`（`/goal` 注册）+ `:107`（`/subgoal` 注册）。
+
+### 工作机制
+
+```
+/goal <目标 + 成功标准>
+   │
+   ▼
+注入 goal block 到系统提示（每轮）
+   │
+   ▼
+Agent 工作 → 完成一轮
+   │
+   ▼
+goal judge 评分（`hermes_cli/goals.py:298 _goal_judge_max_tokens()`)
+   │
+   ▼
+DONE？──否──→ 继续下一轮（带 judge 反馈）
+   │
+   是
+   ▼
+Loop 终止
+```
+
+### `/subgoal <text>` —— Mid-loop 追加成功标准
+
+`hermes_cli/goals.py:79,86,118,123,156`：在 `/goal` 跑到一半时，用 `/subgoal` 把额外 criteria **追加**进 judge。`/subgoal {show, append, remove, clear}` 完整子命令在 `cli.py` 中。Judge 把所有用户附加的 criteria 一起算进 DONE 判定，不必重启循环。
+
+## 多 Agent 控制面 —— `/handoff` / `/steer` / `/queue`（v0.13.0+）
+
+`hermes_cli/commands.py:82,101,103`：
+
+- **`/handoff <profile|platform>`**（v0.13 起，v0.14 升级为实时 session 迁移）—— 把当前 session 整体迁到目标 profile / model / persona；message、tool call、context 完整带走
+- **`/steer <text>`** —— 对**正在运行**的 agent 注入纠偏指令（不打断），`tests/gateway/test_steer_command.py` 验证
+- **`/queue <text>`** —— 后续指令排队进 inflight agent，等它完成当前 turn 自动取出
+
+ACP 同步暴露 `/steer` + `/queue`（`tests/gateway/test_steer_command.py`），Zed / VS Code / JetBrains 用户能驾驭 inflight agent。
+
 ## 相关页面
 
+- [[multi-agent-kanban]] — 跨 session / 跨机器的分布式协作（v0.13.0 起）
+- [[goal-loop-and-steering]] — 同 session 内自动追问 Ralph 循环（v0.13.0 起）
 - [[configuration-and-profiles]] — 多 Profile 架构（另一种多 Agent 方案）
 - [[tool-registry-architecture]] — 子代理通过 registry 获取受限工具集
 - [[auxiliary-client-architecture]] — 子代理可配置独立的辅助模型
 - [[credential-pool-and-isolation]] — 凭证池共享与轮换
-- [[skills-system-architecture]] — Background Review 自动创建/改进的 skill 存储在这里
+- [[skills-system-architecture]] — Background Review、kanban-orchestrator/worker skills
 - [[trajectory-and-data-generation]] — Batch Runner（Nous 内部训练工具，不属于 Agent 运行时）
+- [[2026-05-07-update]] — Kanban 首次发布（v0.13.0）
+- [[2026-05-11-update]] — Kanban 安全 + worker mode 修复
 
 ## 相关文件
 
 - `tools/delegate_tool.py` — 子代理委派实现
 - `tools/mixture_of_agents_tool.py` — 多模型协同推理
 - `tools/send_message_tool.py` — 跨平台消息投递（不属于多 Agent，归类于 messaging-gateway）
+- `tools/kanban_tools.py` — Kanban worker / orchestrator 工具
+- `hermes_cli/kanban_db.py` — Kanban SQLite store
+- `hermes_cli/kanban_diagnostics.py` — 诊断引擎
+- `hermes_cli/kanban_specify.py` — Spec 自动充实
 - `run_agent.py` — IterationBudget 类、Background Review、中断传播
+- `hermes_cli/kanban.py` / `kanban_db.py` / `kanban_decompose.py` / `kanban_diagnostics.py` / `kanban_specify.py` — 跨进程 Kanban 编排层

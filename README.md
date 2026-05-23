@@ -3,8 +3,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Wiki-Hermes_Agent-blue?style=for-the-badge&logo=markdown" alt="Wiki" height="28">
   <img src="https://img.shields.io/badge/Source-hermes--agent-green?style=for-the-badge&logo=github" alt="Source" height="28">
-  <img src="https://img.shields.io/badge/Knowledge_Base-37_pages-orange?style=for-the-badge&logo=obsidian" alt="Knowledge Base" height="28">
-  <img src="https://img.shields.io/badge/Version-v2026.4.23-purple?style=for-the-badge" alt="Version" height="28">
+  <img src="https://img.shields.io/badge/Knowledge_Base-45_pages-orange?style=for-the-badge&logo=obsidian" alt="Knowledge Base" height="28">
+  <img src="https://img.shields.io/badge/Version-v0.14.0-purple?style=for-the-badge" alt="Version" height="28">
   <img src="https://img.shields.io/badge/Verified-Source_Code-brightgreen?style=for-the-badge" alt="Verified" height="28">
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License" height="28">
 </p>
@@ -21,76 +21,90 @@
 - [agent-loop-and-prompt-assembly](concepts/agent-loop-and-prompt-assembly.md): Agent 循环、系统提示构建、平台提示、执行指导
 - [tool-registry-architecture](concepts/tool-registry-architecture.md): 中央工具注册系统，声明式注册+集中调度
 - [model-tools-dispatch](concepts/model-tools-dispatch.md): 工具编排与调度，异步桥接+动态 schema 调整+参数类型强制
-- [toolsets-system](concepts/toolsets-system.md): 工具分组系统、递归解析、14+ 平台工具集
+- [toolsets-system](concepts/toolsets-system.md): 工具分组系统、递归解析、20+ 平台工具集
 - [prompt-builder-architecture](concepts/prompt-builder-architecture.md): 系统提示模块化组装，注入防护+技能缓存+模型特定指导
 - [auxiliary-client-architecture](concepts/auxiliary-client-architecture.md): 辅助 LLM 客户端路由器，多 provider 解析链+自动降级
 - [provider-transport-architecture](concepts/provider-transport-architecture.md): Provider Transport ABC，统一抽象 Anthropic/Chat Completions/Responses API/Bedrock 的数据路径
+- [provider-plugin-system](concepts/provider-plugin-system.md): **NEW v0.13.0** ProviderProfile ABC + 30 个插件化 provider
 
 ### 记忆与会话
 
 - [memory-system-architecture](concepts/memory-system-architecture.md): 三层架构（MemoryStore/MemoryManager/MemoryProvider），冻结快照模式
 - [session-search-and-sessiondb](concepts/session-search-and-sessiondb.md): FTS5 搜索 + LLM 摘要的跨会话回忆，orphan 删除策略
-- [context-compressor-architecture](concepts/context-compressor-architecture.md): 自动上下文压缩 v3，三阶段预处理（MD5 去重/Smart Collapse/参数截断）+ 结构化摘要 + OpenClaw 对比
+- [context-compressor-architecture](concepts/context-compressor-architecture.md): 自动上下文压缩 v3
 - [skills-and-memory-interaction](concepts/skills-and-memory-interaction.md): Skills 与 Memory 的互补关系和决策树
-- [skills-system-architecture](concepts/skills-system-architecture.md): 渐进式披露架构，技能发现、条件激活、密钥管理、插件命名空间技能、Curator 后台维护
+- [skills-system-architecture](concepts/skills-system-architecture.md): 渐进式披露架构 + Curator 后台维护（v0.13 新增 archive/prune/list-archived）
 
 ### 工具与能力
 
 - [browser-tool-architecture](concepts/browser-tool-architecture.md): 多后端浏览器自动化，accessibility tree+三层安全防护
-- [web-tools-architecture](concepts/web-tools-architecture.md): 多后端搜索/提取/爬取，LLM 智能内容压缩
+- [web-tools-architecture](concepts/web-tools-architecture.md): 七大后端插件化搜索/提取/爬取（WebSearchProvider ABC + 注册表），LLM 智能内容压缩
 - [code-execution-sandbox](concepts/code-execution-sandbox.md): execute_code 沙箱，7 工具限制+UDS/File RPC 两种通信模式
-- [voice-mode-architecture](concepts/voice-mode-architecture.md): Push-to-talk 语音交互，STT（3 Provider）+ TTS（5 Provider，含 Gemini/xAI TTS）
+- [voice-mode-architecture](concepts/voice-mode-architecture.md): Push-to-talk 语音交互，STT（5 Provider）+ TTS（10 内置 Provider，含 Piper 本地神经 TTS）
 - [context-references](concepts/context-references.md): @file/@folder/@diff/@url/@git 引用系统，安全沙箱+注入量限制
 - [fuzzy-matching-engine](concepts/fuzzy-matching-engine.md): 8 策略链模糊匹配，从精确到相似度匹配
 - [large-tool-result-handling](concepts/large-tool-result-handling.md): 三层溢出防护（工具内截断/单结果持久化/轮次聚合预算）
+- [lsp-integration](concepts/lsp-integration.md): **NEW v0.14** LSP 语义诊断集成，agent/lsp/ 11 modules + file-mutation footer 三层后写校验
+- [i18n-and-locales](concepts/i18n-and-locales.md): **NEW v0.13** i18n 薄切片本地化（仅 hermes 自身静态消息，不动 agent 输出）
 
 ### 性能与优化
 
-- [parallel-tool-execution](concepts/parallel-tool-execution.md): 智能并发安全检测，三层分类+路径冲突检测
+- [parallel-tool-execution](concepts/parallel-tool-execution.md): 智能并发安全检测
 - [prompt-caching-optimization](concepts/prompt-caching-optimization.md): 冻结快照保护 prefix cache，75% 成本节省
-- [smart-model-routing](concepts/smart-model-routing.md): 智能模型路由，短消息走便宜模型，AWS Bedrock/Gemini OAuth/Ollama Cloud/Tool Gateway
+- [smart-model-routing](concepts/smart-model-routing.md): 智能模型路由
 
 ### 安全与可靠性
 
-- [security-defense-system](concepts/security-defense-system.md): 多层防御体系 + 危险命令审批系统（manual/smart/off 三模式）
-- [interrupt-and-fault-tolerance](concepts/interrupt-and-fault-tolerance.md): 中断传播、结构化错误分类（error_classifier）、Fallback 模型链
-- [credential-pool-and-isolation](concepts/credential-pool-and-isolation.md): 多密钥自动轮换、4 种选池策略、Profile 隔离
+- [security-defense-system](concepts/security-defense-system.md): 多层防御 + Redaction 默认 ON + Discord guild-scoped + post-write delta lint（v0.13.0 安全 wave）
+- [interrupt-and-fault-tolerance](concepts/interrupt-and-fault-tolerance.md): 中断传播、Fallback 模型链
+- [credential-pool-and-isolation](concepts/credential-pool-and-isolation.md): 多密钥自动轮换、Profile 隔离
+- [checkpoints-architecture](concepts/checkpoints-architecture.md): **NEW v0.13.0** Checkpoint v2 共享 shadow git store
+- [tool-loop-guardrails](concepts/tool-loop-guardrails.md): **NEW v0.12.0** 工具调用循环护栏，exact failure / same-tool failure / idempotent no-progress 三维检测
 
 ### 多 Agent
 
-- [multi-agent-architecture](concepts/multi-agent-architecture.md): 4 种运行时机制（delegate_task/MoA/Background Review/send_message）
+- [multi-agent-architecture](concepts/multi-agent-architecture.md): 5 种运行时机制（delegate_task/MoA/Background Review/send_message/**Kanban**）
+- [kanban-multi-agent-board](concepts/kanban-multi-agent-board.md): 可持久化多 Agent 协作板（SQLite + WAL，心跳/熔断/幻觉拦截，跨 session/profile）
+- [goal-and-ralph-loop](concepts/goal-and-ralph-loop.md): `/goal` + `/subgoal` 持续推进系统（fail-open judge，回合预算，保 prompt cache）
 - [configuration-and-profiles](concepts/configuration-and-profiles.md): 多 Profile 架构，完全隔离的 agent 实例（第二种多 Agent 方案）
 
 ### 平台与扩展
 
-- [cli-architecture](concepts/cli-architecture.md): CLI 架构、斜杠命令、hermes dump
+- [cli-architecture](concepts/cli-architecture.md): CLI 架构、斜杠命令、hermes dump/proxy/kanban/curator/migrate
 - [terminal-backends](concepts/terminal-backends.md): 7 种终端后端（含 Vercel Sandbox）、统一 spawn-per-call 执行模型
-- [messaging-gateway-architecture](concepts/messaging-gateway-architecture.md): 18+ 平台统一网关（含 IRC/腾讯元宝/微信/QQ Bot），平台适配器插件化（PlatformRegistry）、代理模式、channel_prompts、角色权限
+- [messaging-gateway-architecture](concepts/messaging-gateway-architecture.md): 22 平台统一网关（含 Teams/LINE/SimpleX Chat/Google Chat 等插件平台），PlatformRegistry、Session auto-resume、统一 allowlist
+- [hermes-proxy](concepts/hermes-proxy.md): OAuth → OpenAI-compatible 本地代理，让 Aider/Cline/Codex 复用 Nous/SuperGrok 订阅
 - [gateway-session-management](concepts/gateway-session-management.md): 网关会话管理，多平台会话隔离+PII 脱敏+重置策略
 - [hook-system-architecture](concepts/hook-system-architecture.md): 双 Hook 系统（Gateway Hooks + Plugin System），register_command/dispatch_tool，Dashboard 插件
 - [mcp-and-plugins](concepts/mcp-and-plugins.md): MCP 集成、插件钩子系统、OAuth 支持
 - [skin-engine](concepts/skin-engine.md): YAML 驱动的皮肤/主题系统
 - [worktree-isolation](concepts/worktree-isolation.md): Git Worktree 并行隔离模式
-- [cron-scheduling](concepts/cron-scheduling.md): 内置调度器、自然语言调度、多平台投递
+- [cron-scheduling](concepts/cron-scheduling.md): 内置调度器、自然语言调度、多平台投递、`no_agent` watchdog 模式
 - [trajectory-and-data-generation](concepts/trajectory-and-data-generation.md): 轨迹保存、批量运行器、RL 训练环境
 
-### 更新日志
+### 更新日志（26 个，最新优先 — 完整列表见 [index.md](index.md)）
 
-- [2026-04-09-update](changelog/2026-04-09-update.md): 59 commits，结构化错误分类、统一执行层、三层溢出防护、BlueBubbles 等
+- [2026-05-22-update](changelog/2026-05-22-update.md): **v0.14.0 集大成** — Kanban、`/goal`+`/subgoal`、Hermes Proxy、PyPI + Windows、Provider/Browser/Web/Video/Image/TTS 全面插件化、Curator 1781 行、LSP semantic diagnostics、Codex app-server、跨 session 1h Claude cache、Cold-start -19s、Teams/LINE/SimpleX/Google Chat、12 P0 + 50 P1 关闭
+- [2026-05-20-update](changelog/2026-05-20-update.md): v0.14.0（~2,480 commits across v0.12.0/v0.13.0/v0.14.0）
+- [2026-05-16-update](changelog/2026-05-16-update.md): v2026.5.16（2,890 commits since v2026.4.23）
+- [2026-05-07-v0.13.0](changelog/2026-05-07-v0.13.0.md): **v0.13.0 release** — Provider plugin 化、Checkpoint v2、i18n、Curator 自治
+- [2026-04-30-v0.12.0](changelog/2026-04-30-v0.12.0.md): **v0.12.0 release (The Curator Release)** — Persistent Goals、Tool-call Loop Guardrails、Kanban、Teams、4 新 Provider
+- [2026-04-29-update](changelog/2026-04-29-update.md): 182 commits (v2026.4.23)，平台适配器插件化（PlatformRegistry + IRC）、Curator 后台技能维护、MiniMax OAuth、Vercel Sandbox、腾讯元宝
+- [2026-04-18-update](changelog/2026-04-18-update.md): 410 commits post-v0.10.0，Transport ABC 重构、Shell Hooks、Delegate Orchestrator、Step Plan/AI Gateway/xAI STT/KittenTTS、WeCom QR
+- [2026-04-17-update](changelog/2026-04-17-update.md): 641 commits (v0.10.0)，压缩 v3、Bedrock/Gemini/Ollama Provider、Tool Gateway、插件命名空间技能、钉钉 QR 认证、Dashboard 插件
 - [2026-04-10-update](changelog/2026-04-10-update.md): 293 commits，Context Engine 插件化、watch_patterns、WeChat、xAI、Discord/Slack 增强
-- [2026-04-17-update](changelog/2026-04-17-update.md): 641 commits (v0.10.0)，压缩 v3、Bedrock/Gemini/Ollama 新 Provider、Tool Gateway、插件命名空间技能、钉钉 QR 认证、Dashboard 插件
-- [2026-04-18-update](changelog/2026-04-18-update.md): 410 commits post-v0.10.0，Transport ABC 重构、Shell Hooks、Delegate Orchestrator、Step Plan/AI Gateway/xAI STT/KittenTTS、WeCom QR、Subagent 观测性
-- [2026-04-29-update](changelog/2026-04-29-update.md): 182 commits (v2026.4.23)，平台适配器插件化（PlatformRegistry + IRC 参考实现）、Curator 后台技能维护、MiniMax OAuth、Vercel Sandbox、腾讯元宝、`on_session_switch`、`/reload-skills`
+- [2026-04-09-update](changelog/2026-04-09-update.md): 59 commits，结构化错误分类、统一执行层、三层溢出防护、BlueBubbles 等
 
 ---
 
 ## 统计信息
 
-- **概念页面**: 37 个
-- **更新日志**: 5 个
+- **概念页面**: 45 个
+- **实体页面**: 2 个
+- **更新日志**: 26 个
 - **源码覆盖**: 关键模块逐行验证
-- **跟踪版本**: v2026.4.23
-- **最后更新**: 2026-04-29
+- **跟踪版本**: v0.14.0（v2026.5.16）
+- **最后更新**: 2026-05-22
 
 
 ## 使用方式
