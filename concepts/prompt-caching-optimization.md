@@ -1,7 +1,7 @@
 ---
 title: Prompt Caching 优化架构
 created: 2026-04-07
-updated: 2026-05-15
+updated: 2026-05-16
 type: concept
 tags: [architecture, module, performance, cost-optimization, anthropic, prompt-cache]
 sources: [agent/prompt_caching.py, run_agent.py, hermes_cli/config.py]
@@ -141,6 +141,8 @@ Hermes 不变量：**系统提示在一个会话内必须字节级静态（byte-
 - 系统提示作为**单个 content 字符串**发送，保证字节稳定。
 
 之所以确立这条不变量，是因为 #24778 诊断出：旧的长效前缀布局把系统提示拆成「稳定 / 上下文 / 易变」三块并每轮重新派生，易变块（时间戳 + memory 快照 + USER profile）每轮都变，导致 8 轮对话中系统块在分钟边界处 sha 翻转、当轮 `cached_tokens` 掉到 0。回退到单块布局后，会话内缓存在每个 provider 上才真正稳定生效。
+
+v2026.5.x：`cache_ttl` 从 `config.yaml` 的 `prompt_caching.cache_ttl` 读取（`run_agent.py`），传给 `apply_anthropic_cache_control`；`_build_marker(ttl)` 抽出为辅助函数。Claude 在 Anthropic / OpenRouter / Nous Portal 上支持跨 session 的 1h prefix cache。OpenRouter 另有独立的响应缓存——`agent/auxiliary_client.py:build_or_headers()` 从 `openrouter.{response_cache, response_cache_ttl}`（默认开启，300s）发出 `X-OpenRouter-Cache*` 头。
 
 ## 成本效益
 

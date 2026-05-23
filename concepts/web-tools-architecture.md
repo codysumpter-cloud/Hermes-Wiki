@@ -1,9 +1,9 @@
 ---
 title: Web Tools 搜索/提取架构
 created: 2026-04-08
-updated: 2026-05-15
+updated: 2026-05-16
 type: concept
-tags: [tool, toolset, architecture, component, plugin]
+tags: [tool, toolset, architecture, component, plugins]
 sources: [tools/web_tools.py, agent/web_search_provider.py, agent/web_search_registry.py, plugins/web/]
 ---
 
@@ -20,86 +20,78 @@ sources: [tools/web_tools.py, agent/web_search_provider.py, agent/web_search_reg
 
 ## 概述
 
-Web Tools 提供**多后端 Web 搜索/提取/爬取**能力，对 Agent 暴露统一的 `web_search`、`web_extract`、`web_crawl` 工具接口。
-
-> **架构变更（2026-05-13 重构）**：所有 Web 后端已迁移到**插件架构**。旧的 in-tree 目录 `tools/web_providers/` 已被删除，每个后端现在是 `plugins/web/<name>/` 下的独立插件，实现统一的 `WebSearchProvider` ABC。`tools/web_tools.py`（约 67KB）现在只负责安全检查、LLM 内容处理与**注册表分发**，不再包含任何 per-vendor 内联代码。
+Web Tools 位于 `tools/web_tools.py`（1551 行），提供**多后端 Web 搜索/提取/爬取**能力。所有后端对 Agent 暴露相同的 `web_search`、`web_extract`、`web_crawl` 工具接口。
 
 核心理念：**内容获取优先于浏览器自动化**——简单信息检索使用 web_search/web_extract（更快、更便宜），仅在需要交互时才使用 browser 工具。
 
-> **2026-05 重构**：search 与 extract 拆为**按能力独立选择 backend**（`tools/web_providers/` ABC + `web.search_backend` / `web.extract_backend`），便于"SearXNG 搜索 + Firecrawl 提取"等组合。
+> **v2026.5.x 重大重构**：所有搜索后端从 `tools/web_tools.py` 内联实现迁移为**插件**（`plugins/web/`）。旧的 `tools/web_providers/` 目录已删除。`web_tools.py` 现在只做工具壳层 + 安全 + LLM 压缩，后端解析全部通过 `agent/web_search_registry` 完成。详见下文「Provider 插件化」。
 
 ## 架构原理
 
-### 插件化的七大后端
+### Provider 插件化（v2026.5.x）
 
-所有后端均为 `plugins/web/<name>/` 下的内置插件（`kind: backend`，自动加载），每个插件包含 `plugin.yaml`、`provider.py` 与 `__init__.py`。在 `plugin.yaml` 中通过 `provides_web_providers` 声明。
+后端不再硬编码在 `web_tools.py`，而是实现统一 ABC，作为 `kind: backend` 插件自动加载。
 
-| 后端 (`name`) | Search | Extract | Crawl | 认证 / 依赖 |
-|---|---|---|---|---|
-| **firecrawl** | ✅ | ✅ | ✅ | `FIRECRAWL_API_KEY` / `FIRECRAWL_API_URL` 或 Nous Gateway |
-| **parallel** | ✅ | ✅ | ❌ | `PARALLEL_API_KEY` |
-| **tavily** | ✅ | ✅ | ✅ | `TAVILY_API_KEY` |
-| **exa** | ✅ | ✅ | ❌ | `EXA_API_KEY` |
-| **searxng** | ✅ | ❌ | ❌ | `SEARXNG_URL`（自托管） |
-| **brave-free** | ✅ | ❌ | ❌ | `BRAVE_SEARCH_API_KEY`（免费层） |
-| **ddgs** | ✅ | ❌ | ❌ | 无需 Key，`pip install ddgs` |
+**ABC — `agent/web_search_provider.py`（221 行）**：`WebSearchProvider(abc.ABC)`
 
-仅 **firecrawl** 与 **tavily** 原生支持 crawl。`searxng`、`brave-free`、`ddgs` 为 search-only 后端。
+| 成员 | 说明 |
+|---|---|
+| `name` / `display_name` | provider 标识 |
+| `is_available()` | 凭证/依赖是否就绪 |
+| `supports_search()` | 能力标志，默认 `True` |
+| `supports_extract()` | 能力标志，默认 `False` |
+| `supports_crawl()` | 能力标志，默认 `False` |
+| `search(query, limit=5)` | 搜索；未覆盖则 `NotImplementedError` |
+| `extract(urls, **kwargs)` | 提取；**可为 `async def`** |
+| `crawl(url, **kwargs)` | 爬取；**可为 `async def`** |
+| `get_setup_schema()` | 供 `hermes tools` picker 使用 |
 
-### WebSearchProvider ABC
+`extract`/`crawl` 允许是协程，dispatcher 通过 `inspect.iscoroutinefunction` 检测并 await。响应格式与旧契约**逐字节保持一致**，工具壳层无需翻译。
 
-定义于 `agent/web_search_provider.py`，是 Web 后端**唯一的插件对接面**（镜像 image_gen 模板）。子类必须实现 `name` 与 `is_available()`，并至少实现 `search` / `extract` / `crawl` 之一。
+**注册门面**：`ctx.register_web_search_provider()`（PluginContext），每个插件 `__init__.py` 提供 `register(ctx)`。
 
-```python
-class WebSearchProvider(abc.ABC):
-    @property
-    @abc.abstractmethod
-    def name(self) -> str: ...          # web.*_backend 配置键匹配的稳定标识
-    @abc.abstractmethod
-    def is_available(self) -> bool: ... # 廉价检查，禁止网络调用
-    def supports_search(self) -> bool: return True
-    def supports_extract(self) -> bool: return False
-    def supports_crawl(self) -> bool: return False
-    def search(self, query, limit=5) -> Dict: ...
-    def extract(self, urls, **kwargs) -> Any: ...   # 可为 async def
-    def crawl(self, url, **kwargs) -> Any: ...      # 可为 async def
-    def get_setup_schema(self) -> Dict: ...         # hermes tools picker 元数据
-```
+### Registry 与解析链 — `agent/web_search_registry.py`（262 行）
 
-`supports_*` 能力标志让注册表把每个工具调用路由到正确的后端；多能力后端（Firecrawl/Tavily/Exa…）可从单一类同时声明多个能力。`extract` 与 `crawl` 既可为同步也可为 `async def`——分发器通过 `inspect.iscoroutinefunction` 检测并 `await`，同步实现则用 `asyncio.to_thread` 包裹。
+线程锁保护的 `_providers` 字典，提供 `register_provider()` / `list_providers()` / `get_provider()`，以及**按能力**解析的 `get_active_search_provider()` / `get_active_extract_provider()` / `get_active_crawl_provider()`。
 
-### 注册表与插件 facade
-
-- **注册表** `agent/web_search_registry.py`：维护 `name → provider` 的全局映射（线程安全），插件在 import 期注册。
-- **插件 facade** `PluginContext.register_web_search_provider()`（定义于 `hermes_cli/plugins.py`）：插件用它注册 provider，会校验实例继承自 `WebSearchProvider`，再调用注册表的 `register_provider()`。
-
-### 后端选择链（活跃 provider 解析）
-
-注册表通过 `get_active_search_provider()` / `get_active_extract_provider()` / `get_active_crawl_provider()` 按能力解析活跃后端，优先级如下：
+`_resolve()` 优先级：
 
 ```text
-1. web.{capability}_backend  (per-capability 覆盖: search_backend/extract_backend/crawl_backend)
-2. web.backend               (共享 fallback)
-3. 若仅有一个支持该能力且 is_available() 的 provider → 直接选用
-4. Legacy 偏好顺序 (按 is_available 过滤):
+1. 显式配置 web.{cap}_backend 或 web.backend —— 即使不可用也优先（精确报错）
+2. 唯一一个「有该能力且可用」的 provider —— 直接走捷径
+3. _LEGACY_PREFERENCE 顺序按 is_available() 过滤：
    firecrawl → parallel → tavily → exa → searxng → brave-free → ddgs
-5. 否则返回 None — 工具提示运行 `hermes tools` 配置后端
+4. 否则 None
 ```
 
-显式 config 命中时**忽略可用性**直接返回，使分发器能给出精确的 "X_API_KEY 未设置" 错误，而不是静默切换后端。能力过滤在每一步生效——例如把 search-only 的 `brave-free` 配成 `web.extract_backend` 时会正确回退到支持 extract 的后端。`tools/web_tools.py` 内的 `_get_backend()` / `_get_capability_backend()` 保留同样的 legacy 候选顺序以保持向后兼容。
+注意是**按能力**分别解析——search/extract/crawl 可以落在不同 provider 上。
+
+### 七个内置 Provider
+
+`plugins/web/<name>/{plugin.yaml, __init__.py, provider.py}`，全部支持 search + extract：
+
+| Provider | 类 | Crawl | Async extract |
+|---|---|---|---|
+| **firecrawl** | `FirecrawlWebSearchProvider` | ✅ | ✅ |
+| **tavily** | `TavilyWebSearchProvider` | ✅ | ❌ |
+| **parallel** | `ParallelWebSearchProvider` | ❌ | ✅ |
+| **exa** | `ExaWebSearchProvider` | ❌ | ❌ |
+| **searxng** | `SearXNGWebSearchProvider` | ❌ | ❌ |
+| **brave_free** | `BraveFreeWebSearchProvider` | ❌ | ❌ |
+| **ddgs** | `DDGSWebSearchProvider` | ❌ | ❌ |
+
+用户可在 `~/.hermes/plugins/web/` 放同名插件覆盖内置实现。
 
 ### Firecrawl 双路径架构
 
-Firecrawl 是 legacy 偏好顺序中的最高优先后端，支持两种连接模式（实现位于 `plugins/web/firecrawl/provider.py`）：
+Firecrawl 插件保留两种连接模式，由 `web.use_gateway` 配置控制（两套凭证都存在时选哪个）：
 
 | 模式 | 路径 / 环境变量 | 适用对象 |
 |---|---|---|
-| **直接模式** | `FIRECRAWL_API_KEY` / `FIRECRAWL_API_URL`（自托管） | 所有用户 |
-| **托管 Gateway** | `FIRECRAWL_GATEWAY_URL` + Nous 订阅者 token | Nous 订阅者 |
+| **直接模式** | `FIRECRAWL_API_KEY` / `FIRECRAWL_API_URL` | 所有用户 |
+| **托管 Gateway** | Nous 托管的 tool-gateway（`FIRECRAWL_GATEWAY_URL` / `TOOL_GATEWAY_*`） | Nous 订阅者 |
 
-`_get_firecrawl_client()` 在两种凭证同时存在时由 `web.use_gateway` 配置决定优先级；客户端按配置缓存，配置不变时复用同一实例。`is_available()` 在直接配置或 gateway 就绪任一满足时返回 True。
-
-**优越性**：Nous 订阅者无需单独购买 Firecrawl，通过 tool-gateway 共享访问。
+`plugins/web/firecrawl/provider.py`（773 行）的 `_get_firecrawl_client()` + `_is_tool_gateway_ready()` 实现该判定，客户端按配置缓存。**优越性**：Nous 订阅者无需单独购买 Firecrawl。
 
 ## 核心组件
 

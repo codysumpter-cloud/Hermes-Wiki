@@ -2,7 +2,7 @@
 
 > 内容目录。每个 wiki 页面按类型列出，附一行摘要。
 > 查询前先读此文件找到相关页面。
-> Last updated: 2026-05-14 | Total pages: 42 | 跟踪版本: v0.13.0 (2026.5.7)
+> Last updated: 2026-05-16 | Total pages: 41（39 concepts + 2 entities）
 
 ## Entities
 
@@ -36,12 +36,9 @@
 - [[security-defense-system]] — 多层防御 + Redaction 默认 ON + Discord guild-scoped + post-write delta lint
 - [[interrupt-and-fault-tolerance]] — 中断传播、Fallback 模型链
 - [[credential-pool-and-isolation]] — 多密钥自动轮换、Profile 隔离
-- [[checkpoints-architecture]] — **新** Checkpoint v2 共享 shadow git store
-
-### 多 Agent
-- [[multi-agent-architecture]] — **5 类机制**：Delegate / MoA / Background Review / Goal Loop / Kanban
-- [[goal-loop-architecture]] — **新** `/goal` 持久目标 + Ralph 判官循环
-- [[kanban-architecture]] — **新** 持久多 profile 协作看板（v0.13.0 旗舰）
+- [[multi-agent-architecture]] — 多 Agent 体系，5 种运行时机制（delegate/MoA/Background Review/send_message/Kanban）
+- [[kanban-system]] — 持久化 SQLite 协作看板，跨进程多 worker，dispatcher/orchestrator/诊断引擎
+- [[goals-and-ralph-loop]] — `/goal` 跨轮次持久目标，judge 模型驱动的 Ralph Loop
 
 ### 平台与扩展
 - [[cli-architecture]] — CLI 架构、斜杠命令（含 /goal、/kanban、/queue、/steer）

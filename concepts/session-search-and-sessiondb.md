@@ -1,10 +1,10 @@
 ---
 title: Session Search and SessionDB
 created: 2026-04-07
-updated: 2026-05-02
+updated: 2026-05-16
 type: concept
-tags: [session-search, session-store, memory, architecture, fts5, trigram, cjk]
-sources: [hermes_state.py, tools/session_search_tool.py, agent/trajectory.py]
+tags: [session-search, session-store, memory, architecture]
+sources: [hermes-agent 源码分析 2026-04-07, hermes_state.py, tools/session_search_tool.py]
 ---
 
 # 会话搜索与 SessionDB
@@ -57,32 +57,17 @@ CREATE VIRTUAL TABLE messages_fts_trigram USING fts5(
 - **布尔逻辑** — `python NOT java`
 - **前缀匹配** — `deploy*`
 
-### 双 FTS5 表设计动机（v2026.4.30+）
+### Trigram FTS5 索引（CJK 搜索，v2026.5.x）
 
-**问题**：默认的 unicode61 tokenizer 把每个 CJK 字符切成独立 token —— 短语 `"模型路由"` 在索引里是 `[模][型][路][由]` 四个独立 token，FTS5 短语查询会破裂。
+默认的 `unicode61` tokenizer 会把中日韩文本切成**单字** token，破坏短语/子串匹配。`hermes_state.py` 新增 `messages_fts_trigram` 虚拟表（`FTS_TRIGRAM_SQL`，`tokenize='trigram'`），用重叠的 3 字节序列建索引，使**任意脚本**的子串查询都能命中——取代了原来对 CJK 的 `LIKE` 回退。
 
-**解决**：trigram tokenizer 创建 3-byte 滑动窗口，CJK / 泰语 / 任何脚本的子串查询都原生工作。每条消息同时写入两张表，查询时按语种特征选择路由。
-
-### `tool_name` + `tool_calls` 入索引（v2026.4.30+）
-
-PR #16914（schema v11）—— FTS5 索引不再只覆盖 `content`，还包含工具名和参数 JSON，可以搜索 "调用过 web_search 但没找到结果" 这类语义。
-
-`hermes_state.py:440-481` 实现自动迁移：
-
-```python
-# v11: re-index FTS5 tables to cover tool_name + tool_calls
-INSERT INTO messages_fts(rowid, content) SELECT id,
-    COALESCE(content, '') || ' ' || 
-    COALESCE(tool_name, '') || ' ' || 
-    COALESCE(tool_calls, '') 
-FROM messages;
+```sql
+CREATE VIRTUAL TABLE messages_fts_trigram USING fts5(
+    content, ..., tokenize='trigram'
+);
 ```
 
-`hermes_state.py:111,123,141,153` 的 INSERT/UPDATE/DELETE 触发器同步维护两张表。
-
-### Underscore 词查询修复
-
-PR #16915 —— FTS5 query sanitization 现在引用带下划线的 token（如 `tool_name` 不被切成 `tool` + `name`）。
+schema 迁移 **v10** 建表并回填存量行，**v11** 重新索引以覆盖 `tool_name` / `tool_calls`。配套 insert/delete/update 触发器镜像 `messages` 表。
 
 ## Session Search 工具
 

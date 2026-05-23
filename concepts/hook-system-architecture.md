@@ -1,7 +1,7 @@
 ---
 title: Hook 系统架构
 created: 2026-04-08
-updated: 2026-05-15
+updated: 2026-05-16
 type: concept
 tags: [architecture, module, extensibility, mcp, plugins]
 sources: [gateway/hooks.py, hermes_cli/plugins.py, model_tools.py, run_agent.py, gateway/platform_registry.py]
@@ -457,25 +457,23 @@ def register(ctx):
 
 同时新增 **Dashboard 主题系统**，支持实时切换。
 
-### Bundled plugins（v0.12.0+）
+## v2026.5.x 插件增强
 
-`plugins/` 现在带四个 bundled 插件目录，启动时自动注册：
+`hermes_cli/plugins.py` 的 `VALID_HOOKS` 新增四个钩子：
 
-| 插件 | 类型 | 说明 |
-|------|------|------|
-| `hermes-achievements` | Dashboard plugin | 从 [@PCinkusz/hermes-achievements](https://github.com/PCinkusz/hermes-achievements) vendor 过来，60+ tiered badges，扫本地 session 历史解锁。**Share card**（2026-05-04）：解锁徽章一键渲染 1200×630 PNG 分享卡（client-side canvas，no backend）。`hermes dashboard` 首次启动自动注册，无需独立安装。源码 `plugins/hermes-achievements/` |
-| `platforms/irc` | Platform plugin | IRC 适配器（参考实现） |
-| `platforms/teams` | Platform plugin | Microsoft Teams Bot Framework 适配器 |
-| `platforms/line` | Platform plugin | LINE Messaging API 适配器 |
-| `platforms/google_chat` | Platform plugin | Google Chat Pub/Sub 适配器 |
+| 钩子 | 时机 |
+|---|---|
+| `transform_llm_output` | 改写 LLM 输出 |
+| `pre_gateway_dispatch` | gateway 分发消息前 |
+| `pre_approval_request` | 危险操作审批请求前 |
+| `post_approval_response` | 审批响应后 |
 
-bundled 插件被 nix 打包系统通过 `HERMES_BUNDLED_PLUGINS` 暴露（6e42daf），确保 pip 安装、源码 clone、nix 安装、Docker 镜像四种场景下都能找到这些 plugin 目录。
+其他新增能力：
 
-### Plugin slash exec live + 错误兜底
-
-- **TUI plugin slash 命令实时执行**（7e780f4 + 21c7c9f）：TUI 里运行插件 slash 命令也走 live 通道，错误被独立 try/except 捕获展示。
-- **Dashboard 主页插件 API 路由 auth**（ec9329e）：插件 API 路由现在统一走 dashboard auth，避免未授权访问。Achievement 插件加 `Authorization` 头 + 用 `X-Hermes-Session-Token`（da2ed47 + 80bb5f2）。
-- **Plugin module sys.modules 注册**（718e4e2）：动态加载的 plugin module 在 `exec` 前先 `register` 到 `sys.modules`——解决 plugin 内部 import 找不到自己 module 的边角情况。
+- **`ctx.llm`** — `PluginContext` 的 `llm` 属性惰性构建 `agent/plugin_llm.py`（1046 行）的门面，提供 `complete` / `complete_structured` 及 async 版本，可在插件内直接发起 LLM 调用；provider/model 覆盖受信任门控。
+- **工具覆盖**：`register_tool(..., override=True)` 可替换内置工具（closes #11049）。
+- **Provider 注册门面**：`ctx.register_web_search_provider()`（详见 [[web-tools-architecture]]）、`ctx.register_video_gen_provider()`、`ctx.register_platform()`（详见 [[messaging-gateway-architecture]]）。model-provider 也以插件形式存在（`kind: model-provider`，详见 [[smart-model-routing]]）。
+- **Bundled observability 插件**：`plugins/observability/langfuse/` 通过 `pre/post_api_request`、`pre/post_llm_call`、`pre/post_tool_call` 钩子上报 trace。
 
 ## 与其他系统的关系
 

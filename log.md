@@ -123,27 +123,31 @@
   - 核心内容: Gateway Hooks 事件驱动(8种事件+通配符)，Plugin System 三级来源(用户/项目/pip)，PluginContext API(工具注册/消息注入/CLI命令/钩子)，缓存友好上下文注入
 - index.md 更新为 37 页
 
-## [2026-05-15] update | 同步 hermes-agent v0.13.0（2026-04-30 ~ 2026-05-15，579 commits）
-基于 NousResearch/hermes-agent HEAD（2026-05-15）源码逐项验证：
+## [2026-05-16] update | 同步 hermes-agent v2026.5.16（v0.14.0，2890 commits since v2026.4.23）
 
-**新增 changelog:** changelog/2026-05-15-update.md
+拉取 hermes-agent 最新源码（commit `fb05f5d4`），对照 wiki 全面更新。窗口跨 v0.12.0/v0.13.0/v0.14.0 三个版本。所有结论经源码验证（6 个并行 research agent 逐文件核对）。
 
-**更新的概念页（16 个，均经源码验证）:**
-- web-tools-architecture — Web 后端插件化重构（tools/web_providers/ 删除，七大 plugins/web/ 插件，WebSearchProvider ABC + web_search_registry）
-- provider-transport-architecture — Codex App-Server 运行时（codex_app_server*.py），api_mode 命名修正（codex_responses）
-- smart-model-routing — xAI Grok OAuth、NovitaAI、Qwen Cloud 重命名、Nous Portal 元数据权威源、hermes proxy、NVIDIA NIM header
-- auxiliary-client-architecture — OAuth provider 辅助客户端构建器、NIM 计费 header、文件大小修正
-- context-compressor-architecture — protect_first_n 可配置（默认 3）
-- prompt-caching-optimization — 长效前缀缓存回退（#24778）、系统提示字节静态不变量、Portal Qwen TTL 限制
-- tool-registry-architecture — write_file/patch 的 LSP 语义诊断（agent/lsp/ 模块）
-- agent-loop-and-prompt-assembly — 每轮文件变更校验页脚（#24498）、GLM 工具使用强制
-- security-defense-system — 供应链咨询检查器、懒安装框架、YOLO 模式可见性
-- messaging-gateway-architecture — SimpleX/Teams 插件平台、clarify 内联按钮、Discord 历史回填、send_multiple_images
-- voice-mode-architecture — Piper 本地 TTS（10 内置 provider）、command 类型 TTS 注册表、STT 修正为 5 provider
-- skills-system-architecture — curator archive/prune 子命令、huggingface/skills 信任 tap、pinned 保护收窄为仅 delete
-- trajectory-and-data-generation — RL 基础设施移除（#26106），仅剩 SFT 数据生成
-- hook-system-architecture — 线程级工具白名单（set_thread_tool_whitelist）
-- cron-scheduling — cron 操作按名称查找
-- terminal-backends — docker_extra_args 配置项
+**新建页面 (2):**
+- concepts/kanban-system.md — Kanban 协作看板（源码: tools/kanban_tools.py 1139行, hermes_cli/kanban_db.py ~4839行, hermes_cli/kanban_diagnostics.py ~776行, plugins/kanban/）
+- concepts/goals-and-ralph-loop.md — Goals / Ralph Loop（源码: hermes_cli/goals.py 756行）
 
-**README.md:** 版本 v0.13.0、更新日志 6 个、目录条目同步
+**更新页面 (9):**
+- web-tools-architecture.md — Web 搜索后端插件化（agent/web_search_provider.py, web_search_registry.py, plugins/web/ 7 providers）
+- smart-model-routing.md — Model Provider 插件化（providers/base.py ProviderProfile, plugins/model-providers/ 33 providers）+ 新 Provider
+- messaging-gateway-architecture.md — 5 个新平台、/handoff、slash_access 分级、i18n 16 语言、shutdown forensics、自动恢复
+- multi-agent-architecture.md — 第 5 种机制 Kanban、delegate child_timeout=600s
+- skills-system-architecture.md — Skills Hub taps（huggingface/skills）、URL 安装、platforms frontmatter、Curator 新子命令
+- hook-system-architecture.md — 4 个新钩子、ctx.llm、register_tool override、langfuse 插件
+- session-search-and-sessiondb.md — Trigram FTS5 索引（CJK 搜索）
+- context-compressor-architecture.md — compression.protect_first_n 可配置
+- prompt-caching-optimization.md / provider-transport-architecture.md — cache_ttl 配置、Codex app-server runtime
+
+**新建 changelog (1):**
+- changelog/2026-05-16-update.md — 2890 commits（v2026.4.24 ~ 2026-05-16）
+
+**源码验证发现的纠正:**
+- commit 信息提到的「/goal checklist」子命令在 hermes_cli/goals.py 中不存在，未写入 wiki
+- lmstudio / tencent-tokenhub 未作为 model-provider 插件存在，未写入 wiki
+- README/index.md 计数与版本徽章同步至 v2026.5.16
+
+- index.md 更新为 41 页（39 concepts + 2 entities）
