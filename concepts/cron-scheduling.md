@@ -1,17 +1,26 @@
 ---
 title: Cron 调度与自动化工作流
 created: 2026-04-07
-updated: 2026-04-07
+updated: 2026-05-07
 type: concept
-tags: [architecture, cron, automation, scheduling]
-sources: [hermes-agent 源码分析 2026-04-07]
+tags: [architecture, cron, automation, scheduling, watchdog]
+sources: [cron/jobs.py, hermes-agent 源码分析 2026-04-07]
 ---
+
+> **v2026.5.7 增量**：
+>
+> - **`no_agent` 模式**（#19709）—— cron job 跳过 agent，仅运行脚本。空 stdout 静默；非空原样投递。源码 `cron/jobs.py:438` `no_agent: bool = False` 参数 + line 457「the script IS the job — its stdout is delivered verbatim」。适用看门狗 / uptime / 状态检查类。
+> - **`context_from` chaining 文档化**（#20394）。
+> - **Fix #21354**：在构造 cron AIAgent 前初始化 MCP servers（之前 cron job 会拿到空 MCP 工具集）。
+> - **Fix #21371**：在 fallback restart 前 reset-failed，让 gateway 不会被卡住。
+> - **Fix**：扫描 cron job 注入时**包含 skill content**（#21350，P0 安全闭环）。
+> - **Fix**：cron job 加载 skill 时 bump skill usage（#19433） —— curator 才能看到 cron 持有的 skill 是「活的」。
 
 # Cron 调度与自动化工作流
 
 ## 设计原理
 
-Hermes 内置 Cron 调度器，支持**自然语言定时任务**，可以自动执行重复性工作并将结果推送到任意平台。
+Hermes 内置 Cron 调度器，支持**自然语言定时任务**，可以自动执行重复性工作并将结果推送到任意平台。**v2026.5.7+ 起还支持脚本-only 看门狗模式（`no_agent`）**。
 
 ## Cron 工具
 

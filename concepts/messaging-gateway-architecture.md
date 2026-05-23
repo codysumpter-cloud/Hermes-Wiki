@@ -1,17 +1,20 @@
 ---
 title: Messaging Gateway Architecture
 created: 2026-04-07
-updated: 2026-05-06
+updated: 2026-05-07
 type: concept
 tags: [gateway, architecture, module, telegram, discord, messaging, qq, proxy]
-sources: [gateway/run.py, gateway/platforms/, plugins/platforms/, hermes_cli/config.py]
+sources: [gateway/run.py, gateway/platforms/, gateway/platform_registry.py, plugins/platforms/, hermes_cli/config.py, hermes_cli/plugins.py]
 ---
 
 # 消息网关架构
 
 ## 概述
 
-Gateway 是 Hermes Agent 的**统一消息网关**，从 v0.12.0 起共支持 **19 个内置/插件消息平台**（核心 18 + Microsoft Teams 插件，第 19 个），从单一进程管理所有平台的连接和消息分发。
+Gateway 是 Hermes Agent 的**统一消息网关**，支持 **20 个消息平台**（v2026.5.7 起），从单一进程管理所有平台的连接和消息分发。其中：
+
+- **17 个内置平台**（`gateway/platforms/`）
+- **3 个插件平台**（`plugins/platforms/`）—— IRC（v2026.4.23+）、Microsoft Teams（v2026.4.30+）、Google Chat（v2026.5.7+）
 
 ## 架构
 
@@ -73,7 +76,30 @@ gateway/
 | Webhook | HTTP | 外部事件接收 |
 | **腾讯元宝 Yuanbao** | API | 原生文本+媒体投递，sticker 支持（v2026.4.23+），群聊 owner identity check |
 | **IRC**（插件） | TLS asyncio | 零外部依赖，TLS、PING/PONG、nick collision、NickServ、频道寻址（v2026.4.23+，参考实现） |
-| **Microsoft Teams**（插件） | Bot Framework | v0.12.0 新增，第 19 个平台，OAuth (TENANT/CLIENT_ID/CLIENT_SECRET)，单消息上限 ~28KB（`plugins/platforms/teams/adapter.py`） |
+| **Microsoft Teams**（插件） | Bot Framework | 第 19 个平台 / 第 2 个插件平台（v2026.4.30+），sidebar + threading + group-chat fallback |
+| **Google Chat**（插件） | Chat API | 第 20 个平台 / 第 3 个插件平台（v2026.5.7+），通用 `env_enablement_fn` / `cron_deliver_env_var` 钩子统一接口 |
+
+### 跨平台 allowlist（v2026.5.7+）
+
+`allowed_channels` / `allowed_chats` / `allowed_rooms` 配置覆盖：
+
+| 平台 | 配置键 | 源码 |
+|------|--------|------|
+| Slack | `allowed_channels` | gateway/platforms/slack.py |
+| Telegram | `allowed_chats` | gateway/platforms/telegram.py:2778 `_telegram_allowed_chats()` |
+| Mattermost | `allowed_channels` | gateway/platforms/mattermost.py |
+| Matrix | `allowed_rooms` / `MATRIX_ALLOWED_ROOMS` | gateway/platforms/matrix.py:21 |
+| DingTalk | `allowed_chats` | gateway/platforms/dingtalk.py |
+
+非空时**硬 gate**：DM 与允许列表外的频道一律拒绝（DM 在 Matrix 等平台可豁免）。
+
+### `[[as_document]]` 媒体路由指令（v2026.5.7+）
+
+skill 输出可以加 `[[as_document]]` 标记，强制平台以 document（文件附件）形式投递而非 inline image。源码 `gateway/platforms/base.py:1899-1923` 在 `extract_media` 之前捕获，剥离指令后保留原始路径。
+
+### `transform_llm_output` 插件钩子（v2026.5.7+）
+
+新生命周期钩子（`run_agent.py:14279`、`hermes_cli/plugins.py:86`），允许插件在 LLM 输出进入对话前 reshape / 过滤。适用上下文窗口压缩、内容过滤等场景。
 
 ## 平台适配器插件化（v2026.4.23+）
 

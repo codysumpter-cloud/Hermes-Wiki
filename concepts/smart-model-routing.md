@@ -1,11 +1,20 @@
 ---
 title: Smart Model Routing 智能模型路由
 created: 2026-04-08
-updated: 2026-05-06
+updated: 2026-05-07
 type: concept
 tags: [architecture, module, model-routing, performance, caching, anthropic, plugin]
-sources: [agent/model_metadata.py, agent/models_dev.py, hermes_cli/model_switch.py, hermes_cli/model_normalize.py, providers/, plugins/model-providers/]
+sources: [agent/model_metadata.py, agent/models_dev.py, hermes_cli/model_switch.py, hermes_cli/model_normalize.py, providers/base.py, plugins/model-providers/]
 ---
+
+> **v2026.5.7 重要变更**：Provider 已**插件化**。`providers/base.py:25` 定义 `ProviderProfile` dataclass，`plugins/model-providers/` 目录下集成了 14 个 provider 插件（gmi / kilocode / stepfun / openai-codex / alibaba / xiaomi / xai / azure-foundry / copilot-acp / kimi-coding / zai / gemini / custom / ollama-cloud）。第三方 provider 不需要改核心。配套 `list_picker_providers`（凭证过滤 picker，#20298），删除 `/provider` 别名，Nous OAuth token 跨 profile 共享（#19712）。
+>
+> **新增 provider（v2026.4.30 ~ v2026.5.7）**：GMI Cloud（first-class）、Azure AI Foundry（自动检测）、Tencent Tokenhub、LM Studio（升级为 first-class，dedicated auth + `hermes doctor` + reasoning transport + live `/models` listing）。MiniMax OAuth 已在 v2026.4.23 covered。
+>
+> **新模型**：`deepseek/deepseek-v4-pro`、`x-ai/grok-4.3`、`openrouter/owl-alpha`（free）、`tencent/hy3-preview`、`x-ai/grok-4.20`（rename）。Arcee Trinity Large Thinking 加 temperature + compression overrides。
+>
+> **OpenRouter response caching**（@kshitijk4poor, #19132）—— 显式 cache-control 给支持的模型。
+
 
 # Smart Model Routing — 智能模型路由
 

@@ -1,17 +1,23 @@
 ---
 title: 语音模式架构
 created: 2026-04-10
-updated: 2026-05-04
+updated: 2026-05-07
 type: concept
-tags: [voice, stt, tts, architecture, piper, registry]
-sources: [tools/voice_mode.py, tools/tts_tool.py, tools/transcription_tools.py, cli.py]
+tags: [voice, stt, tts, architecture, video]
+sources: [tools/voice_mode.py, tools/tts_tool.py, tools/transcription_tools.py, tools/vision_tools.py, cli.py]
 ---
+
+> **v2026.5.7 增量**：
+>
+> - **xAI Custom Voices —— 语音克隆**（@alt-glitch, #18776）。源码 `tools/tts_tool.py:861` `_generate_xai_tts` + line 875 `voice_id = str(xai_config.get("voice_id", DEFAULT_XAI_VOICE_ID))`，与 ElevenLabs / MiniMax / Mistral TTS 并列。
+> - **`video_analyze` 工具**（@alt-glitch, #19301）。Gemini 等多模态 model 上原生视频理解。源码 `tools/vision_tools.py:915` `async def video_analyze_tool`，name 在 line 1123，与 line 759 `vision_analyze` 平级。
+> - **TUI voice push-to-talk parity 恢复**（salvage #16189，#20897）。
 
 # 语音模式架构
 
 ## 概述
 
-Hermes 支持 Push-to-talk 语音交互：用户按键录音 → STT 转文字 → LLM 处理 → TTS 语音播报回复。整个链路在 CLI 中完成，依赖可选的音频库。
+Hermes 支持 Push-to-talk 语音交互：用户按键录音 → STT 转文字 → LLM 处理 → TTS 语音播报回复。整个链路在 CLI 中完成，依赖可选的音频库。**v2026.5.7+ 还支持视频理解**（`video_analyze`）和**语音克隆**（xAI Custom Voices）。
 
 ## 依赖
 

@@ -1,11 +1,23 @@
 ---
 title: Hook 系统架构
 created: 2026-04-08
-updated: 2026-05-02
+updated: 2026-05-07
 type: concept
-tags: [architecture, module, extensibility, mcp, plugins, gateway-dispatch, approval-lifecycle]
-sources: [gateway/hooks.py, hermes_cli/plugins.py, model_tools.py, run_agent.py, gateway/run.py, tools/approval.py]
+tags: [architecture, module, extensibility, mcp, plugins, llm-output]
+sources: [gateway/hooks.py, hermes_cli/plugins.py, model_tools.py, run_agent.py]
 ---
+
+> **v2026.5.7 新增钩子**：
+>
+> | 钩子 | 源码 | 用途 |
+> |------|------|------|
+> | **`transform_llm_output`**（#21235） | `run_agent.py:14279`，名见 `hermes_cli/plugins.py:86` | 在 LLM 输出进入对话前 reshape / 过滤；上下文窗口压缩、内容过滤 |
+> | **`env_enablement_fn`**（#21331） | 平台插件注册时 | 决定平台是否在当前环境启用（基于 env vars） |
+> | **`cron_deliver_env_var`**（#21331） | 平台插件注册时 | cron 投递前需要哪些 env var |
+>
+> 后两个把 IRC、Teams、Google Chat 这样的**插件平台**纳入统一接口，不再需要在核心代码 if/elif。
+>
+> **`register_platform`** API 在 `hermes_cli/plugins.py:476` —— 插件注册新消息平台的入口。
 
 # Hook 系统架构
 

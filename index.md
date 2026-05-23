@@ -2,7 +2,7 @@
 
 > 内容目录。每个 wiki 页面按类型列出，附一行摘要。
 > 查询前先读此文件找到相关页面。
-> Last updated: 2026-05-06 | Total pages: 37 + 6 changelogs
+> Last updated: 2026-05-07 | Total pages: 37 | Tracking: hermes-agent v0.13.0 (v2026.5.7)
 
 ## Entities
 

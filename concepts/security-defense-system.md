@@ -1,11 +1,26 @@
 ---
 title: 安全防御体系 — 多层注入检测
 created: 2026-04-07
-updated: 2026-05-02
+updated: 2026-05-07
 type: concept
-tags: [architecture, security, injection-defense, skills-guard, redaction, hardline]
-sources: [tools/skills_guard.py, tools/memory_tool.py, tools/approval.py, agent/redact.py, agent/prompt_builder.py, run_agent.py, tools/url_safety.py]
+tags: [architecture, security, injection-defense, skills-guard, p0]
+sources: [hermes-agent 源码分析 2026-04-07, RELEASE_v0.13.0.md]
 ---
+
+> **v2026.5.7 安全 wave —— 8 个 P0 闭环**：
+>
+> | 修复 | PR | 说明 |
+> |------|-----|------|
+> | **Secret redaction 默认 ON** | #21193 | 升级前需显式启用 |
+> | **Discord `DISCORD_ALLOWED_ROLES` scope 到 originating guild** | #21241 | **CVSS 8.1** 跨-guild DM 旁路闭环 |
+> | **WhatsApp 默认拒绝陌生人**，永不在 self-chat 回复 | #21291 | #8389 |
+> | **MCP OAuth credential 写入 TOCTOU 闭环** | #21176 | |
+> | **`hermes_cli/auth.py` credential writers TOCTOU 闭环** | #21194 | |
+> | **Browser cloud-metadata SSRF 底线**（hybrid routing 也走） | #21228 | |
+> | **`hermes debug share` upload 时 redact 日志** | #19318 | @GodsBoy |
+> | **Cron prompt-injection 扫描包含 skill content 的 assembled prompt** | #21350 | #3968 |
+>
+> 附加：`.env` / `auth.json` / `state.db` 还原后 0600 perm（#19699）；Dashboard plugin 脚本 SRI integrity（#21277）；Meet node server 绑 localhost + token 文件 owner-only 读（#19597）。
 
 # 安全防御体系 — 多层注入检测
 

@@ -1,11 +1,26 @@
 ---
 title: MCP 集成与插件系统
 created: 2026-04-07
-updated: 2026-05-04
+updated: 2026-05-07
 type: concept
 tags: [architecture, mcp, plugins, extensibility]
-sources: [hermes-agent 源码分析 2026-04-07, plugins/, hermes_cli/plugins.py, dashboard]
+sources: [tools/mcp_tool.py, tools/mcp_oauth.py, tools/mcp_oauth_manager.py, hermes_cli/plugins.py]
 ---
+
+> **v2026.5.7 MCP 升级**：
+>
+> - **SSE transport** 支持（salvage #19135，#21227）—— `tools/mcp_tool.py:34` `transport: sse` 配置；line 199-204 SSE client 加载逻辑；line 1301 `# SSE transport (for MCP servers that implement the SSE transport protocol`。
+> - **OAuth auth forward** + 长 SSE `sse_read_timeout` 提升（#21323）。
+> - **Stale-pipe retry**：transport 失败当作 session-expired 处理并重连（#21289）。
+> - **Image tool result** 走 MEDIA tag 而不是丢弃（#21328）。
+> - **Periodic keepalive** to `_wait_for_lifecycle_event`（#20209）—— 长周期 lifecycle 等待中保持连接。
+> - **Fix #21204**：`mcp add --command` 独立 argparse dest —— 之前会 silent launch chat 而不是注册 server。
+> - **Fix #21347**：utility stub 按 server 通告的 capability gate（避免暴露未声明能力）。
+>
+> **插件系统新增钩子**（v2026.5.7+）：
+>
+> - **`transform_llm_output`**（#21235）—— 在 LLM 输出进入对话前 reshape / 过滤。源码 `run_agent.py:14279`，名见 `hermes_cli/plugins.py:86`。
+> - **`env_enablement_fn`** + **`cron_deliver_env_var`**（#21331）—— 平台插件统一钩子，IRC / Teams / Google Chat 都用。
 
 # MCP 集成与插件系统
 

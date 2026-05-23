@@ -1,11 +1,17 @@
 ---
 title: Memory System Architecture
 created: 2026-04-07
-updated: 2026-05-06
+updated: 2026-05-07
 type: concept
 tags: [memory, architecture, module]
-sources: [tools/memory_tool.py, agent/memory_manager.py, agent/memory_provider.py, agent/builtin_memory_provider.py, run_agent.py, agent/prompt_builder.py, plugins/memory/, plugins/memory/hindsight/__init__.py]
+sources: [tools/memory_tool.py, agent/memory_manager.py, agent/memory_provider.py, agent/builtin_memory_provider.py, run_agent.py, agent/prompt_builder.py, plugins/memory/__init__.py, gateway/platforms/api_server.py]
 ---
+
+> **v2026.5.7 增量**：
+>
+> - **API Server `X-Hermes-Session-Key` header**（#20199）—— 给 memory provider 一个稳定 session 标识，让长期记忆按 session 隔离。源码 `gateway/platforms/api_server.py:5` 注释。
+> - **Hindsight provider** 增加 `update_mode='append'` probe API，跨进程 dedup（@nicoloboschi, #20222）。
+> - `on_session_switch` 钩子已落地（v2026.4.23 引入）：源码确认 `cli.py:5339, 5447, 5583` + `run_agent.py:9540` 调用 `_memory_manager.on_session_switch(...)` —— 在 `/resume` / `/branch` / `/reset` / `/new` / 上下文压缩时通知 provider 刷新缓存。
 
 # 记忆系统架构
 

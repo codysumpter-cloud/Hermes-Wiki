@@ -1,11 +1,22 @@
 ---
 title: Skills System Architecture
 created: 2026-04-07
-updated: 2026-05-06
+updated: 2026-05-07
 type: concept
-tags: [skill, architecture, module, prompt-builder]
-sources: [tools/skills_tool.py, tools/skill_manager_tool.py, tools/skills_hub.py, tools/skills_guard.py, run_agent.py, agent/prompt_builder.py, hermes_cli/plugins.py, agent/skill_utils.py, hermes_cli/curator.py, agent/curator.py, tools/skill_usage.py]
+tags: [skill, architecture, module, prompt-builder, curator]
+sources: [tools/skills_tool.py, tools/skill_manager_tool.py, tools/skills_hub.py, tools/skills_guard.py, run_agent.py, agent/prompt_builder.py, hermes_cli/plugins.py, hermes_cli/curator.py, agent/skill_utils.py]
 ---
+
+> **v2026.5.7 增量**：
+>
+> - **Curator 子命令扩展**：除 `status / run / pause / resume / pin / unpin / restore` 外新增：
+>   - `hermes curator archive <skill>` —— 立即手工归档（`hermes_cli/curator.py:258` `_cmd_archive`）
+>   - `hermes curator prune --days N` —— 批量归档 N 天闲置（line 295 `_cmd_prune`，默认 90 天，pinned 跳过）
+>   - `hermes curator list-archived`（#21236）
+>   - `hermes curator run` 现在**同步**返回结果（不再轮询）（#21216）
+> - **Self-improvement loop 升级**（v2026.4.30）：class-first（rubric-based）、active-update biased、处理 `references/` / `templates/` 子文件、正确继承父 agent 的 live runtime（provider / model / 凭证）、限制在 memory + skills toolset。
+> - **`[[as_document]]` 指令**（#21210）—— skill 输出可加此标记，强制平台以 document 投递。源码 `gateway/platforms/base.py:1899-1923`。
+> - **`/reload-skills`**（v2026.4.23+）—— 不失效 prompt cache 的热重载（已在 04-29 covered）。
 
 # 技能系统架构
 

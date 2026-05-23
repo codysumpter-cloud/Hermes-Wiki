@@ -1,18 +1,22 @@
 ---
 title: CLI 架构与终端交互设计
 created: 2026-04-07
-updated: 2026-05-04
+updated: 2026-05-07
 type: concept
-tags: [architecture, cli, terminal, ux]
-sources: [cli.py, hermes_cli/_parser.py, hermes_cli/main.py, hermes_cli/commands.py]
+tags: [architecture, cli, terminal, ux, i18n, goal]
+sources: [cli.py, hermes_cli/goals.py, hermes_cli/curator.py, locales/, hermes-agent 源码分析 2026-04-07]
 ---
 
-> **v0.12.0 新增斜杠命令**：`/goal`（[[persistent-goals-ralph-loop]]）、`/kanban`（[[kanban-multi-profile-board]]）、`/reload-skills`、`/busy`、`/btw`(`/background` 别名)、`/steer`、`/queue`、`/curator`、`/mouse`。
+> **v2026.4.30 ~ v2026.5.7 增量**：
 >
-> **v0.12.0 新增 CLI 子命令**：`hermes -z <prompt>`（一次性 non-interactive 模式，支持 `--model`/`--provider`/`HERMES_INFERENCE_MODEL`）、`hermes update --check`/`--yes`、`hermes fallback`、`hermes kanban …`（15 verbs）、`hermes curator {status,run,pause,resume,pin,unpin,restore,backup,rollback}` —— `run --dry-run` / `--sync`。
->
-> **TUI**：cold start 降幅 ~57%（lazy agent init + lazy import + mtime-cache config），`?` mini help、model picker 内联 provider setup（`d` 断开、绝对编号、show-all-providers）、self-improvement summary 在 transcript 渲染、respect max turns、mouse mode self-heal、SGR mouse 片段恢复。
-
+> - **`hermes -z <prompt>` 一次性模式**（v2026.4.30+）—— 非交互式 one-shot，支持 `--model` / `--provider` / `HERMES_INFERENCE_MODEL`。
+> - **`hermes update --check`**（v2026.4.30+）preflight，opt-in pre-update HERMES_HOME 备份。
+> - **`hermes update --yes/-y`** 跳过交互（#18261）。
+> - **`/goal`**（v2026.5.7+）—— Ralph loop，跨轮目标锁定。源码 `hermes_cli/goals.py`（535 行）。`/goal <text>` 设定，`/goal resume` 继续，`/goal clear` 清除。
+> - **`/new <session_name>`**（v2026.5.7+）接受可选 session 名（#19637）。
+> - **`/curator archive | prune | list-archived`**（v2026.5.7+）curator 子命令。`hermes_cli/curator.py:258` 起。
+> - **i18n —— 7 个 locale**：源码 `locales/` 下 `en/zh/ja/de/es/fr/uk/tr.yaml`。`display.language` 配置启用。
+> - **100 条新 CLI 启动 tip**（#20168）覆盖 cron / kanban / curator / plugins 等。
 
 # CLI 架构与终端交互设计
 

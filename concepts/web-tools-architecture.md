@@ -1,17 +1,26 @@
 ---
 title: Web Tools 搜索/提取架构
 created: 2026-04-08
-updated: 2026-05-06
+updated: 2026-05-07
 type: concept
-tags: [tool, toolset, architecture, component]
-sources: [tools/web_tools.py, tools/web_providers/]
+tags: [tool, toolset, architecture, component, search]
+sources: [tools/web_tools.py]
 ---
+
+> **v2026.5.7 增量**：
+>
+> - **Per-capability backend selection**（@kshitijk4poor, #20061）—— search / extract / browse 各自独立选 backend（如 SearXNG 搜索 + Firecrawl 抽取）。
+> - **新搜索 backend**：
+>   - **SearXNG**（@kshitijk4poor, #20823）原生 search-only backend，配合 `searxng-search` optional skill。
+>   - **Brave Search**（free tier）（commit `04193cf`）。
+>   - **DDGS**（DuckDuckGo Search）（commit `04193cf`）。
+> - 源码确认：`tools/web_tools.py:129` backend 列表完整为 `parallel / firecrawl / tavily / exa / searxng / brave-free / ddgs`，`tools/web_tools.py:142` `("searxng", _has_env("SEARXNG_URL"))` 注释「Free-tier backends (searxng / brave-free / ddgs) trail the paid ones so」。
 
 # Web Tools — 搜索/提取架构
 
 ## 概述
 
-Web Tools 位于 `tools/web_tools.py`，提供**多后端 Web 搜索/提取/爬取**能力。支持 5 种后端提供商，所有后端对 Agent 暴露相同的 `web_search`、`web_extract`、`web_crawl` 工具接口。
+Web Tools 位于 `tools/web_tools.py`，提供**多后端 Web 搜索/提取/爬取**能力。**v2026.5.7 起支持 7 种搜索后端**（Parallel / Firecrawl / Tavily / Exa / SearXNG / Brave-Free / DDGS），所有后端对 Agent 暴露相同的 `web_search`、`web_extract`、`web_crawl` 工具接口。
 
 核心理念：**内容获取优先于浏览器自动化**——简单信息检索使用 web_search/web_extract（更快、更便宜），仅在需要交互时才使用 browser 工具。
 
