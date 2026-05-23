@@ -1,10 +1,10 @@
 ---
 title: Cron 调度与自动化工作流
 created: 2026-04-07
-updated: 2026-05-18
+updated: 2026-05-20
 type: concept
-tags: [architecture, cron, automation, scheduling, watchdog, no-agent]
-sources: [cron/jobs.py, cron/scheduler.py, hermes_cli/cron.py, tools/cronjob_tools.py]
+tags: [architecture, cron, automation, scheduling, webhook]
+sources: [cron/scheduler.py, cron/jobs.py, tools/cronjob_tools.py, gateway/platforms/webhook.py]
 ---
 
 > **v2026.5.7 增量**：
@@ -37,6 +37,20 @@ Hermes 内置 Cron 调度器，支持**自然语言定时任务**，可以自动
 - **`croniter` 升级到 core 依赖（v0.12 PR #17577）**：之前是 optional，破坏 fresh install
 - **MCP server 初始化先于 AIAgent 构造（v0.13 PR #21354）**：cron 模式下 MCP 工具不再缺席
 - **prompt injection 扫描 assembled prompt + skill 内容（v0.13 P0 #21350）**：堵住 cron 任务被 prompt injection 操控的漏洞
+
+## 三种执行模式（HEAD）
+
+| 模式 | 是否走 Agent | 用途 |
+|------|-------------|------|
+| **Agent 模式**（默认） | 是 | LLM 收到 prompt → 工具调用 → 输出投递 |
+| **`no_agent` 脚本模式**（v0.13.0） | **否** | 只跑用户脚本；空 stdout 安静，非空逐字投递 |
+| **Webhook 直送**（v0.11.0） | **否** | gateway/platforms/webhook.py 的 `deliver_only=true` route，外部 HTTP 事件**绕过 agent** 直投平台/频道 |
+
+源码事实：
+
+- `no_agent`：`cron/jobs.py` 解析 `no_agent: true` 字段后调 subprocess 跑命令。
+- webhook 直送：`gateway/platforms/webhook.py:485-518` `[webhook] direct-deliver` 路径。
+- 注入扫描：`cron/scheduler.py:50 class CronPromptInjectionBlocked` —— 拼装好的 prompt 触发注入扫描时抛出，operator 看到"job blocked"清洁错误而不是 scheduler 崩。这是 v0.13.0 安全潮的一部分（扫描已组装 skill 内容）。
 
 ## Cron 工具
 

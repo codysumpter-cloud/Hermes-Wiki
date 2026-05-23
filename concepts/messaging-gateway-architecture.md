@@ -1,17 +1,23 @@
 ---
 title: Messaging Gateway Architecture
 created: 2026-04-07
-updated: 2026-05-19
+updated: 2026-05-20
 type: concept
-tags: [gateway, architecture, module, telegram, discord, messaging, qq, proxy]
-sources: [gateway/run.py, gateway/platforms/, plugins/platforms/, hermes_cli/config.py]
+tags: [gateway, architecture, module, telegram, discord, messaging, qq, teams, line, simplex, proxy]
+sources: [gateway/run.py, gateway/platforms/, gateway/platform_registry.py, plugins/platforms/, hermes_cli/config.py]
 ---
 
 # 消息网关架构
 
 ## 概述
 
-Gateway 是 Hermes Agent 的**统一消息网关**，支持 19 个内置平台 + 5 个插件平台（共 24 个），从单一进程管理所有平台的连接和消息分发。插件平台通过 `PlatformRegistry` 注入，无需改 gateway 核心代码。
+Gateway 是 Hermes Agent 的**统一消息网关**，从单一进程管理所有平台的连接和消息分发。
+
+**HEAD 期支持 22 个消息平台**：
+
+- **17 个内置**（`gateway/config.py:100` Platform enum 成员）：telegram / discord / whatsapp / slack / signal / mattermost / matrix / homeassistant / email / sms / dingtalk / feishu / wecom / weixin / bluebubbles / qqbot / yuanbao
+- **5 个插件**（`plugins/platforms/*/adapter.py`）：irc / teams / google_chat / line / simplex
+- **加非聊天接入**：api_server / webhook / msgraph_webhook
 
 ## 架构
 
@@ -88,14 +94,12 @@ plugins/platforms/         # 插件化平台（v0.13.x+）
 | 微信/WeChat | iLink Bot API | 长轮询收消息，AES-128-ECB 媒体加密，QR 登录 |
 | QQ Bot | Official API v2 | WebSocket 入站(C2C/群/频道/DM) + REST 出站,语音转录(腾讯 ASR),allowlist + DM 配对 |
 | Webhook | HTTP | 外部事件接收 |
-| MSGraph Webhook | Microsoft Graph | 内置适配器，通过 Graph 订阅接收事件（`gateway/platforms/msgraph_webhook.py`） |
-| **腾讯元宝 Yuanbao** | API | 原生文本+媒体投递，sticker 支持（v2026.4.23+） |
-| **MS Graph Webhook** | Webhook | Microsoft Graph 订阅式消息（gateway/platforms/msgraph_webhook.py） |
-| **IRC**（插件） | TLS asyncio | 零外部依赖，TLS、PING/PONG、nick collision、NickServ、频道寻址（v2026.4.23+，参考实现） |
-| **LINE**（插件） | LINE Messaging API | 个人/群组消息（plugins/platforms/line/） |
-| **Google Chat**（插件） | Chat API | bundled plugin（plugins/platforms/google_chat/） |
-| **Microsoft Teams**（插件） | Bot Framework | 卡片审批 UX、保持卡片可见性、`hermes` UA、teams_pipeline 出站投递（plugins/platforms/teams/） |
-| **SimpleX Chat**（插件） | Bridge | 隐私优先即时通讯（plugins/platforms/simplex/） |
+| **腾讯元宝 Yuanbao** | API（内置） | 原生文本+媒体投递，sticker 支持，state.db 持久化 platform_message_id 用于精确召回（HEAD） |
+| **IRC**（插件） | TLS asyncio | 零外部依赖，TLS、PING/PONG、nick collision、NickServ、频道寻址（v0.11.0，参考实现） |
+| **Microsoft Teams**（插件） | Bot Framework + MS Graph | Adaptive Card 审批、DM/频道、会议召开+转录+摘要（`plugins/teams_pipeline/` 2436 行端到端，v0.14.0） |
+| **Google Chat**（插件） | Chat API + OAuth | 第 20 个平台（v0.13.0） |
+| **LINE**（插件） | LINE Messaging API | 日韩台主流（v0.14.0） |
+| **SimpleX Chat**（插件） | 去中心化 / 无 user ID | 隐私聊天（v0.14.0） |
 
 ### Bundled 平台插件（plugins/platforms/）
 
@@ -144,27 +148,15 @@ def register(ctx):
 | `PluginContext.register_platform()` | 镜像 `register_tool()` / `register_hook()` 模式 |
 | `_apply_env_overrides` | 调用 `entry.env_enablement_fn()`，让 `gateway status` 看得到 env-only 配置（v0.13） |
 
-### 4 个 bundled 插件参考实现
+### 5 个插件平台实现（HEAD）
 
-| 插件路径 | 标签 | 关键技术 |
-|----------|------|----------|
-| `plugins/platforms/irc/` | IRC | asyncio + TLS + NickServ，零外部依赖 |
-| `plugins/platforms/teams/` | Microsoft Teams | Bot Framework + Adaptive Card 审批 + threading |
-| `plugins/platforms/google_chat/` | Google Chat | Cloud Pub/Sub pull + Chat REST + 每用户 OAuth 文件附件 |
-| `plugins/platforms/line/` | LINE | aiohttp webhook + HMAC-SHA256 + Reply token + Push API fallback |
-
-### 当前 plugin 平台目录（v0.13.0）
-
-`plugins/platforms/` 下 4 个：
-
-| 插件 | 状态 | 入站 / 出站 |
-|------|------|-----------|
-| `irc` | v0.12 参考实现 | stdlib asyncio TLS |
-| `teams` | v0.12 引入 | Microsoft Graph API |
-| `google_chat` | v0.13 引入（第 20 个平台） | Cloud Pub/Sub pull + Chat REST + per-user OAuth 附件 |
-| `line` | v0.13 引入 | Line Messaging API |
-
-每个插件目录有 `plugin.yaml`，里面声明 `requires_env` / `optional_env` 列表（带 description / prompt / url / password 元数据），`hermes config` UI 在 platform-plugin 注入器中渲染为向导。
+| 插件 | 文件 / 行数 | 关键能力 |
+|------|------------|---------|
+| `plugins/platforms/irc/` | adapter.py | TLS asyncio，零外部依赖（v0.11.0） |
+| `plugins/platforms/teams/` | adapter.py (1197) + 独立 `plugins/teams_pipeline/` (2436) | Bot Framework + MS Graph，会议召开 / 转录 / 摘要（v0.14.0） |
+| `plugins/platforms/google_chat/` | adapter.py (3342) + oauth.py | Chat API + OAuth（v0.13.0，第 20 个平台） |
+| `plugins/platforms/line/` | adapter.py (1638) | LINE Messaging API（v0.14.0） |
+| `plugins/platforms/simplex/` | adapter.py (746) | 去中心化、无 user ID（v0.14.0） |
 
 ### 平台插件 12 个集成点全覆盖
 
@@ -206,6 +198,13 @@ def register(ctx):
 ### `[[as_document]]` 媒体路由指令（v0.13.0）
 
 `gateway/platforms/base.py:2095-2119`：skill 输出里出现 `[[as_document]]` 字符串时，gateway 把所有图片附件改成**文档投递**（适用于 Signal / 部分企业平台需要保留原图细节的场景），然后从可见文本里剥离指令字符串。一次声明，覆盖该 response 中的所有图片路径。
+
+### 网关 = 插件宿主（v0.12.0+）
+
+v0.12.0 起 gateway 正式成为 **plugin host**：
+- Drop-in messaging adapter 住在 core 之外
+- Microsoft Teams 是首个 plugin-shipped 平台（v0.12.0 引入，v0.14.0 端到端完工）
+- 第三方加新平台**不需要 fork 仓库**，只需 drop `plugins/platforms/<name>/` 目录
 
 ## 平台适配器基类
 

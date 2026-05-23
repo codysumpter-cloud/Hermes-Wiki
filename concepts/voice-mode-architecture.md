@@ -1,10 +1,10 @@
 ---
 title: 语音模式架构
 created: 2026-04-10
-updated: 2026-05-15
+updated: 2026-05-20
 type: concept
-tags: [voice, stt, tts, architecture, piper]
-sources: [tools/voice_mode.py, tools/tts_tool.py, tools/transcription_tools.py, cli.py]
+tags: [voice, stt, tts, architecture, provider-registry]
+sources: [tools/voice_mode.py, tools/tts_tool.py, tools/transcription_tools.py, agent/voice/, cli.py]
 ---
 
 > **v2026.5.7 增量**：
@@ -86,9 +86,24 @@ XAI_API_KEY=...               # xAI Grok STT
 
 TTS Provider 选择和语音设置通过 `tools/tts_tool.py` 管理，支持 ElevenLabs 的流式播报——LLM 生成一句就播一句，不用等完整回复。
 
-### 内置 TTS Provider
+### TTS Provider 矩阵（v0.12.0 起改为 registry）
 
-`tools/tts_tool.py` 的 `BUILTIN_TTS_PROVIDERS` 当前包含 10 个内置 provider：
+v0.12.0 引入 `tts.providers.<name>` 插件 registry（PR #17843，关 #8508）。所有 TTS provider 现在通过同一 ABC 注册。
+
+| Provider | 来源 |
+|----------|------|
+| ElevenLabs | 原有 — 流式 |
+| OpenAI | 原有 |
+| **Google Gemini TTS** | v0.10.0，Gemini API |
+| **xAI TTS** | v0.10.0，xAI Responses API |
+| **KittenTTS（本地）** | v0.10.0+，CPU，无 GPU 无 API key |
+| **Piper（本地）**（v0.12.0） | 第一个走新 registry 落地的 native local TTS（PR #17885） |
+| **xAI Custom Voices**（v0.13.0） | TTS provider + **声音克隆**支持（@alt-glitch，PR #18776） |
+| **xAI TTS speech-tag pauses**（post-v0.14.0） | opt-in，让 SSML 类暂停标签工作 |
+
+这些 provider 也可通过 Nous Tool Gateway 统一访问（无需自备 API key）。
+
+### STT Provider 扩展（v2026.4.18+）
 
 | Provider | 说明 |
 |----------|------|

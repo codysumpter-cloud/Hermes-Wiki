@@ -1,9 +1,9 @@
 ---
 title: Web Tools 搜索/提取架构
 created: 2026-04-08
-updated: 2026-05-19
+updated: 2026-05-20
 type: concept
-tags: [tool, toolset, architecture, component, plugin]
+tags: [tool, toolset, architecture, component, web-search, registry]
 sources: [tools/web_tools.py, agent/web_search_provider.py, agent/web_search_registry.py, plugins/web/]
 ---
 
@@ -22,20 +22,35 @@ sources: [tools/web_tools.py, agent/web_search_provider.py, agent/web_search_reg
 
 Web Tools 提供**多后端 Web 搜索/提取/爬取**能力，所有后端对 Agent 暴露相同的 `web_search`、`web_extract`、`web_crawl` 工具接口。
 
-自 hermes 0.14.0 起，Web 后端被迁移为**插件架构**。旧的 `tools/web_providers/` 目录（及其 `tools.web_providers.base` ABC、`tools/web_tools.py` 内的逐厂商内联实现）已**整体删除**。当前结构：
-
-- `agent/web_search_provider.py` — `WebSearchProvider` 抽象基类（ABC），插件唯一对接面。
-- `agent/web_search_registry.py` — 全局注册表与活动后端解析。
-- `plugins/web/<name>/` — 各 provider 插件（内置，`kind: backend`，自动加载）。
-- `tools/web_tools.py`（67KB/1551 行）— 仅保留三个工具包装器、LLM 内容处理引擎、安全层；不再含任何厂商内联代码。
-
 核心理念：**内容获取优先于浏览器自动化**——简单信息检索使用 web_search/web_extract（更快、更便宜），仅在需要交互时才使用 browser 工具。
 
-## 插件架构
+## v0.13.0+ 按 capability 拆分 + provider registry
 
-### WebSearchProvider ABC
+v0.13.0 (@kshitijk4poor PR #20061 / #20823 / #20841) 把 web 工具从单一后端模型重构为**按 capability 分别选 backend**：
 
-定义于 `agent/web_search_provider.py:63`。子类必须实现 `name`（`agent/web_search_provider.py:75`）与 `is_available()`（`:90`），并实现 `search` / `extract` / `crawl` 中至少一个。能力标志位让注册表为每次调用路由到正确的 provider：
+```yaml
+# config.yaml
+web:
+  search:   searxng     # 只做搜索
+  extract:  firecrawl   # 只做单页提取
+  crawl:    firecrawl   # 只做爬取
+```
+
+`agent/web_search_provider.py` 是 ABC，`agent/web_search_registry.py` 是注册表，`plugins/web/<provider>/` 是 plugin 布局，**与 [[provider-plugin-system]] 完全同构**。
+
+## 架构原理
+
+### 后端
+
+| 后端 | Search | Extract | Crawl | 认证 |
+|---|---|---|---|---|
+| **Firecrawl** | ✅ | ✅ | ✅ | API Key 或 Nous Gateway |
+| **Exa** | ✅ | ✅ | ❌ | EXA_API_KEY |
+| **Parallel** | ✅ | ✅ | ❌ | PARALLEL_API_KEY |
+| **Tavily** | ✅ | ✅ | ✅ | TAVILY_API_KEY |
+| **SearXNG**（v0.13.0） | ✅ | ❌ | ❌ | `plugins/web/searxng/`，self-hosted（公共实例可用） |
+| **xAI Web Search**（post-v0.14.0） | ✅ | — | — | `plugins/web/xai/provider.py` |
+| **Brave Free / DDGS**（HEAD） | ✅ | — | — | `plugins/web/brave_free/` + `plugins/web/ddgs/` 零配置后端 |
 
 | 方法 | 默认值 | 说明 |
 |---|---|---|

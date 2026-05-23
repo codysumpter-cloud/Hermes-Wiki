@@ -1,10 +1,10 @@
 ---
 title: CLI 架构与终端交互设计
 created: 2026-04-07
-updated: 2026-05-18
+updated: 2026-05-20
 type: concept
-tags: [architecture, cli, terminal, ux]
-sources: [hermes_cli/commands.py, hermes_cli/goals.py, hermes_cli/kanban.py, hermes_cli/curator.py, cli.py]
+tags: [architecture, cli, terminal, ux, tui, ink]
+sources: [cli.py, hermes_cli/, ui-tui/, tui_gateway/]
 ---
 
 > **v2026.4.30 ~ v2026.5.7 增量**：
@@ -22,7 +22,16 @@ sources: [hermes_cli/commands.py, hermes_cli/goals.py, hermes_cli/kanban.py, her
 
 ## 设计原理
 
-Hermes CLI 提供完整的终端用户体验：自动补全、多行编辑、流式输出、工具调用可视化。基于 `prompt_toolkit` 和 `rich` 构建。
+Hermes 实际上有 **两个完全独立的 CLI 前端**（共用同一后端 agent）：
+
+1. **经典 CLI**（`cli.py` + `hermes_cli/`） —— Python `prompt_toolkit` + `rich`，进 `hermes` 默认入口。
+2. **Ink TUI**（`ui-tui/` + `tui_gateway/`） —— v0.11.0 起的 React/Ink 重写，进 `hermes --tui`。Python 这边跑一个 JSON-RPC server（`tui_gateway/`），Ink Node 进程通过 RPC 调 agent。
+
+> Ink TUI 是 v0.11.0 ~310 commits 的重写（@OutThisLife + Teknium）。v0.12.0 完成 ~57% 冷启动加速，v0.14.0 进一步 −19 秒。
+
+## 经典 CLI
+
+基于 `prompt_toolkit` 和 `rich` 构建。
 
 ## 核心组件
 
@@ -261,45 +270,57 @@ hermes send --list
 | 主题系统 | ✅ Skin Engine | ❌ | ❌ |
 | 工具调用预览 | ✅ 格式化 | ✅ | ❌ |
 
-## v0.12.0 / v0.13.0 新增斜杠命令
+## v0.11.0+ 新增子命令 / 斜杠命令
 
-| 命令 | 来源 | 行为 |
-|---|---|---|
-| **`/goal <text>`** | `hermes_cli/goals.py`（v0.13.0） | 锁定目标，每轮 judge done/continue；详见 [[goal-and-ralph-loop]] |
-| **`/goal status/pause/resume/clear`** | 同上 | 状态管理 |
-| **`/steer <prompt>`** | v0.11.0 | 中段提示，agent 下一个 tool call 后看到，不破 prompt cache |
-| **`/queue <prompt>`** | v0.13.0 ACP | 排队下一指令 |
-| **`/kanban …`** | `hermes_cli/kanban.py:2181`（v0.13.0） | 共享 15-verb argparse 树；详见 [[kanban-multi-agent]] |
-| **`/curator …`** | `hermes_cli/curator.py`（v0.11~0.13） | status/run/pause/resume/pin/unpin/restore/archive/prune/list-archived |
-| **`/reload-skills`** | v0.11.0 | rescan `~/.hermes/skills/`，不破 prompt cache |
-| **`/reload`** | v0.11.0 TUI 移植 | `.env` 热重载 |
-| **`/reload-mcp`** | v0.11.0 | 带"未来不再询问"确认对话框（清缓存代价大） |
-| **`/clear`** | v0.11.0 | 带 confirm |
-| **`/model`** (TUI) | v0.13.0 | 和 `hermes model` 等价，含 inline auth |
-| **`/mouse`** | v0.12.0 TUI | toggle ConPTY 假鼠标注入 |
+### 子命令（`hermes <subcommand>`）
 
-## `hermes -z` 一次性模式（v0.12.0）
+| 命令 | 源码 | 版本 |
+|------|------|------|
+| `hermes proxy` | `hermes_cli/proxy/` | v0.14.0 — OAuth → OpenAI 本地代理（详见 [[hermes-proxy]]） |
+| `hermes kanban {add,show,list,take,complete,block,unblock,comment,link,decompose,specify,diagnostics,swarm,serve,boards}` | `hermes_cli/kanban*.py` | v0.13.0（详见 [[multi-agent-kanban]]） |
+| `hermes curator {status,run,pause,resume,pin,unpin,restore,list-archived,archive,prune}` | `hermes_cli/curator.py` + `agent/curator.py` | v0.12.0+ |
+| `hermes -z <prompt>` | `hermes_cli/oneshot.py` | v0.12.0 — 非交互一次性 |
+| `hermes update --check` | `hermes_cli/main.py` | v0.12.0 — 升级前 preflight + opt-in HERMES_HOME 备份 |
+| `hermes migrate xai [--apply] [--no-backup]` | `hermes_cli/migrate.py` + `hermes_cli/xai_retirement.py` | post-v0.14.0 — xAI 退役模型批量改 config |
+| `hermes acp --setup-browser` | `hermes_cli/main.py` | v0.14.0 — Zed ACP Registry 安装路径 bootstrap |
+| `hermes proxy --provider nous\|xai` | 同上 | v0.14.0 |
 
-```
-hermes -z "fix the failing test in tests/test_x.py"
-hermes -z "summarize this PR" --model claude-opus-4.5
-HERMES_INFERENCE_MODEL=gpt-5.5 hermes -z "..."
-```
+### 斜杠命令（session 内）
 
-非交互式 prompt，跑完就退——给脚本 / CI / cron 之外的一次性自动化任务用。配合 `--model` / `--provider` / 环境变量。
+| 命令 | 版本 | 不变量 |
+|------|------|--------|
+| `/goal <text>` | v0.13.0 | Ralph 循环，prompt cache 不失效（详见 [[goal-loop-and-steering]]） |
+| `/steer <text>` | v0.11.0 强化 | 当回合补丁，next-turn note 注入 |
+| `/queue <text>` | v0.13.0 ACP | FIFO 等当前 turn 完成 |
+| `/handoff <target>` | v0.14.0 | 现场迁移整个 session 到目标 model/persona/profile |
+| `/reload-skills` | v0.11.0 | 重扫 `~/.hermes/skills/` 不失效 prompt cache |
+| `/reload-mcp` | v0.11.0 | 失效 prompt cache，弹确认 |
+| `/clear` (带确认) | v0.11.0 | — |
+| `/mouse` | v0.12.0 | 关 ConPTY 幻影鼠标注入（@kevin-ho） |
+| `/kanban ...` | v0.13.0 | 同 `hermes kanban` argparse 表面 |
+| `/board` | v0.13.0 | 看板 dashboard 入口 |
+| `/curator status` | v0.12.0 | — |
 
-## `hermes update --check` 预检（v0.12.0）
+`/steer` 和 `/queue` 也由 ACP 客户端（Zed / VS Code / JetBrains，@HenkDz）触发。
 
-跑升级前先看是否真的有新版本可用，opt-in pre-update HERMES_HOME 备份避免升级出错丢配置。
+## TUI 增强（Ink TUI）
 
-## TUI vs Classic CLI
-
-`ui-tui/` 是 React/Ink 重写的 TUI（v0.11.0 起），与 `cli.py` 经典 CLI 共存：
-
-- TUI 是默认（`hermes` / `hermes --tui`），React/Ink 前端 + Python JSON-RPC 后端（`tui_gateway`）
-- Classic CLI（`hermes --classic` 或 fall back）
-
-经典 CLI 的功能逐步往 TUI 迁，比如 LaTeX 渲染、`d` 删 session、`/reload`、`/mouse` 都在 v0.12 ~ v0.13 落地。
+| 功能 | 版本 |
+|------|------|
+| Sticky composer + OSC-52 剪贴板 + 稳定 picker keys | v0.11.0 |
+| 状态栏 per-turn stopwatch + git branch | v0.11.0 |
+| 子代理 spawn observability overlay | v0.11.0 |
+| LaTeX 渲染（@austinpickett） | v0.12.0 |
+| `d` 删 session in `/resume` picker | v0.12.0 |
+| `/reload` 热重载 `.env` | v0.12.0 |
+| 可插拔 busy-indicator（@OutThisLife） | v0.12.0 |
+| 自动 resume 上次 session（opt-in） | v0.12.0 |
+| 扩展明亮终端自动检测 | v0.12.0 |
+| 修饰键鼠标滚轮行滚动 | v0.12.0 |
+| `/model` picker inline 鉴权（@austinpickett） | v0.13.0 |
+| 启动 banner 可折叠区块（@kshitijk4poor） | v0.13.0 |
+| 状态栏 context-compression counter | v0.13.0 |
+| 点击 OSC8 hyperlink（@OutThisLife） | v0.14.0 |
 
 ## 相关页面
 
@@ -311,15 +332,14 @@ HERMES_INFERENCE_MODEL=gpt-5.5 hermes -z "..."
 - [[context-references]] — @file/@diff/@url 引用系统
 - [[worktree-isolation]] — Git Worktree 并行隔离
 - [[code-execution-sandbox]] — 代码执行沙箱
-- [[goal-and-ralph-loop]] — `/goal` 命令实现
-- [[kanban-multi-agent]] — `/kanban` 子命令
-- [[skills-system-architecture]] — `/curator` 子命令
+- [[multi-agent-kanban]] — `/kanban` 与 `hermes kanban`
+- [[goal-loop-and-steering]] — `/goal` `/steer` `/queue` `/handoff`
+- [[hermes-proxy]] — `hermes proxy`
 
 ## 相关文件
 
-- `cli.py` — CLI 主类（`_handle_sessions_command()` 处理经典 CLI 的 `/sessions` 斜杠命令）
-- `hermes_cli/main.py` — 入口点和子命令（注册 `hermes send`）
-- `hermes_cli/send_cmd.py` — `hermes send` 实现（`send_message_tool` 薄封装）
+- `cli.py` — 经典 CLI 主类（660KB；大单体文件）
+- `hermes_cli/main.py` — 入口点和子命令
 - `hermes_cli/commands.py` — 斜杠命令定义
 - `hermes_cli/goals.py` — `/goal` Ralph 循环
 - `hermes_cli/kanban.py` — `/kanban` argparse 树
@@ -327,5 +347,9 @@ HERMES_INFERENCE_MODEL=gpt-5.5 hermes -z "..."
 - `hermes_cli/dump.py` — `hermes dump` 环境摘要（纯文本，用于调试/提 issue）
 - `agent/display.py` — 显示系统
 - `hermes_cli/skin_engine.py` — 皮肤引擎
-- `ui-tui/` — Ink TUI 前端
-- `tui_gateway/` — TUI 后端 JSON-RPC
+- `hermes_cli/goals.py` — `/goal` Ralph 循环
+- `hermes_cli/kanban*.py` — 看板 CLI 族
+- `hermes_cli/curator.py` — `hermes curator` 子命令
+- `hermes_cli/proxy/` — `hermes proxy` server
+- `ui-tui/` — Ink TUI（Node.js / React）
+- `tui_gateway/` — Python JSON-RPC backend for Ink TUI
