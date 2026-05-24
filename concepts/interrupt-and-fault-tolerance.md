@@ -520,6 +520,59 @@ def _close_request_client_once(...):
 
 三层独立 —— 任一回滚不会立刻重开 advisory。Kanban 那一侧已经独立加了 `KanbanDbCorruptError` 失败闭合（详见 [[kanban-multi-agent-board]] §DB 抗污染），定居一道纵深防御。
 
+## Streaming 完成可见性三连（2026-05-24）
+
+之前几条"流式响应静默结束"的事故在同一天合并修复：
+
+### Guardrail halt 消息推到客户端（`38b8d0d` + `186bf25 test`，#30770）
+
+`agent/conversation_loop.py:3478-3486` —— `tool guardrail halt` 分支退出 turn 时，原代码只 append final_response 到 messages，**没**通过 stream callback 推给客户端。SSE 流静默关闭，Open WebUI 等客户端看到空 finish chunk —— 与 crash 无法区分。
+
+```python
+# agent/conversation_loop.py:3478-3486
+if final_response:
+    agent._safe_print(f"\n{final_response}\n")
+    if agent.stream_delta_callback:
+        try:
+            agent.stream_delta_callback(final_response)
+            agent.stream_delta_callback(None)
+        except Exception:
+            pass
+break
+```
+
+`+49 行` 新测试（`tests/run_agent/test_tool_call_guardrail_runtime.py`），revert 即失败。
+
+### Plugin `transform_llm_output` 流式后可见（5 commit 链）
+
+之前 `transform_llm_output` plugin hook 在 streaming 已发完后修改 `final_response`，gateway / ACP 都因 `streamed_message=True` 跳过 final send —— hook 修改对客户端**不可见**。
+
+修复链：
+
+| commit | 文件:行 | 改动 |
+|--------|---------|------|
+| (链头) | `agent/conversation_loop.py:4081, 4100, 4152` | 新增 `_response_transformed` 标志；hook 返回非空字符串时置 True；写入 result dict |
+| `a4ceead` | `gateway/run.py:17044` | `run_sync` 返回字典 cherry-pick 加 `response_transformed` 字段 |
+| `5cb21e3` | `gateway/run.py:17680-17717` + `gateway/stream_consumer.py:196-199` | `_transformed=True` 时不抑制 final send，但**编辑** streamed message in-place（用 `stream_consumer.message_id` + `adapter.edit_message(...)`），不发重复消息 |
+| `7eb6c7f` + `60d20a3` | `acp_adapter/server.py:1537-1544` | `if final_response and conn and (not streamed_message or result.get("response_transformed"))` —— 只在被 transform 的路径上抹掉 `streamed_message` 屏蔽 |
+
+`gateway/stream_consumer.py:196-199` 新增 public property：
+
+```python
+@property
+def message_id(self) -> str | None:
+    """The Discord/chat message ID of the last-sent or edited message."""
+    return self._message_id
+```
+
+### Partial-stream `finish_reason=length` 修复（`9140be7` + `20b3703` + `6cafcf9 test`，#30963）
+
+网络中断的 partial stream stub 之前 `finish_reason="stop"`，触发"正常结束"路径而非长度续传路径，最后一段被丢。
+
+- `agent/chat_completion_helpers.py:97-141` + `:1312-1345`：text-only partial stream stub 强制 `finish_reason="length"`。
+- `agent/conversation_loop.py:42-50` 续传路径专用 prompt 模板（区分网络中断 vs 模型主动 length-truncation），共享 `length_continue_retries=3` 预算与 `truncated_response_parts` merging。
+- +258 行测试 pin contract（network-error continuation prompt 必须送到 model call #2，`final_response` stitch 两半）。
+
 ## 相关页面
 
 - [[credential-pool-and-isolation]] — 凭证池与轮换机制

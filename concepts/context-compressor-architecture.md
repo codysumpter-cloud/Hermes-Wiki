@@ -654,6 +654,17 @@ while api_call_count < max_iterations and iteration_budget.remaining > 0:
 - **Aux 头预算保留 system + tools headroom**（PR #15631）—— aux 模型 binding threshold 时给 system + tools 留空间，防止压缩 prompt 太长触发 aux 自身 ctx 限制
 - **`/compress` 包在 `_busy_command`**（PR #15388）—— 压缩期间阻止用户继续输入，避免 race condition
 
+## ABC 合规修复（2026-05-23 ~ 24，`8b2adea` + `dcbcdd6`）
+
+- `agent/context_compressor.py:+7` —— ABC 合规：`total_tokens` 属性与 `api_mode` 字段对齐 `ContextEngine` ABC。
+- `agent/context_engine.py:+1` —— ABC 接口同步。
+- `agent/conversation_loop.py` —— 4 处 `update_model()` 调用补 `api_mode` 参数：long_context failover 与 probe stepping。
+- `agent/agent_runtime_helpers.py` —— rollback restore 路径同传 `compressor_api_mode`。
+- `agent/chat_completion_helpers.py` —— fallback activation 路径同传。
+- 5 个文件共 31 处 root-logger 调用（`logging.warning/error/info`）换 module logger（`logger.warning/error/info`），尊重模块级 log filtering。
+
+带 `tests/agent/test_last_total_tokens.py:+22` 和 `tests/run_agent/test_plugin_context_engine_init.py` 回归。
+
 ## 与其他系统的关系
 
 - [[auxiliary-client-architecture]] — 压缩通过 `call_llm(task="compression")` 调用

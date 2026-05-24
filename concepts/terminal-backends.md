@@ -144,6 +144,29 @@ terminal(command="pytest -v", background=True, watch_patterns=["ERROR", "FAIL", 
 
 通知通过 `ProcessRegistry.completion_queue` 传递给 CLI/Gateway 的主循环，触发 agent 自动响应。
 
+### `background=true` 静默运行警告（2026-05-23，`d97c324`，#31289）
+
+`tools/terminal_tool.py:1962-1990`：`background=true` 没配 `notify_on_complete=true` **也**没配 `watch_patterns` 时，tool result 内嵌 `hint` 字段告诉 agent："this process runs SILENTLY"。
+
+```text
+background=true without notify_on_complete=true means this process runs
+SILENTLY — you will not be told when it exits. If this is a bounded task
+(test suite, build, CI poller, deploy, anything with a defined end), you
+almost certainly wanted notify_on_complete=true so the system pings you
+on exit. Re-launch with notify_on_complete=true, or call
+process(action='poll') / process(action='wait') yourself to learn the
+outcome. Only ignore this hint for genuine long-lived processes that
+never exit (servers, watchers, daemons).
+```
+
+背景：2026-05 PR #31231 incident —— bg CI poller 跑完，agent 没注意到，用户手动 surface 结果。该 hint 对 bounded task 是必需提醒（false negative 比 false positive 严重）；对 server/watcher 是 false positive，agent 应忽略。
+
+## Windows 进程树终止（2026-05-23，`7ce6b50`）
+
+`tools/process_registry.py:436-475 _terminate_host_pid` —— Windows 分支改用 `taskkill /PID <pid> /T /F`（之前 `os.kill(pid, SIGTERM)` → `TerminateProcess`，**只**杀目标 handle，Chromium renderer / GPU / network helper 子进程残留）。POSIX 分支与 `taskkill.exe` 缺失时回退到 `os.kill` 链。
+
+配套（`22f3f5a`）：`tools/browser_tool.py:9` Browser daemon cleanup 改用 `ProcessRegistry._terminate_host_pid()`（psutil 叶到根遍历），不再 orphan Chromium 子进程。
+
 ## 优越性分析
 
 ### 与其他 Agent 框架对比

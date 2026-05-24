@@ -1,9 +1,9 @@
 ---
 title: Messaging Gateway Architecture
 created: 2026-04-07
-updated: 2026-05-22
+updated: 2026-05-24
 type: concept
-tags: [gateway, architecture, module, telegram, discord, messaging, qq, teams, line, simplex, proxy]
+tags: [gateway, architecture, module, telegram, discord, messaging, qq, teams, line, simplex, ntfy, proxy]
 sources: [gateway/run.py, gateway/platforms/, plugins/platforms/, hermes_cli/config.py]
 ---
 
@@ -11,7 +11,7 @@ sources: [gateway/run.py, gateway/platforms/, plugins/platforms/, hermes_cli/con
 
 ## 概述
 
-Gateway 是 Hermes Agent 的**统一消息网关**，截至 v0.14 (2026-05-16) 支持 **22 个消息平台**（含 5 个插件平台：IRC / Teams / Google Chat / LINE / SimpleX Chat），从单一进程管理所有平台的连接和消息分发。
+Gateway 是 Hermes Agent 的**统一消息网关**，截至 2026-05-24 支持 **23 个消息平台**（含 6 个插件平台：IRC / Teams / Google Chat / LINE / SimpleX Chat / **ntfy**），从单一进程管理所有平台的连接和消息分发。
 
 ## 架构
 
@@ -95,6 +95,7 @@ plugins/platforms/         # 插件化平台（v0.13.x+）
 | **LINE**（插件） | Messaging API | 日韩台主流通讯（v0.14，`plugins/platforms/line/`） |
 | **SimpleX Chat**（插件） | 去中心化无 ID | privacy-focused（v0.14，`plugins/platforms/simplex/`） |
 | **Google Meet**（plugin） | OpenAI Realtime + Node bot | 会议接入：转录 + 跟进（v0.12，`plugins/google_meet/`） |
+| **ntfy**（插件） | HTTP streaming sub + POST publish | 第 23 平台。`plugins/platforms/ntfy/`，零额外依赖（仅 httpx），无原生 user identity —— 每 topic 视为单一受信任频道（2026-05-23） |
 
 > 还原成插件后，gateway 核心从 21 个 if/elif 收敛到 1 个 registry 查询；新平台 0 代码改 core。
 
@@ -176,6 +177,7 @@ def register(ctx):
 | `plugins/platforms/google_chat/` | adapter.py (3342) + oauth.py | Chat API + OAuth（v0.13.0，第 20 个平台） |
 | `plugins/platforms/line/` | adapter.py (1638) | LINE Messaging API（v0.14.0） |
 | `plugins/platforms/simplex/` | adapter.py (746) | 去中心化、无 user ID（v0.14.0） |
+| `plugins/platforms/ntfy/` | adapter.py (582) + plugin.yaml (56) | HTTP streaming subscribe + POST publish；零额外依赖；**81 个新测试**；2026-05-23 通过 `b10f17b`→`6a8e131`→`3b096d6` 三 commit 链落地（先 built-in，再重构为插件，再加固 401/404 fatal-error 暴露） |
 
 ### 后续插件平台（v0.12 → v0.14）
 
@@ -183,6 +185,7 @@ def register(ctx):
 - **Google Chat** (`plugins/platforms/google_chat/`，v0.13.0) —— 第 20 个平台
 - **LINE** (`plugins/platforms/line/`，v0.14.0) —— 日韩台
 - **SimpleX Chat** (`plugins/platforms/simplex/`，v0.14.0) —— 隐私优先去中心化
+- **ntfy** (`plugins/platforms/ntfy/`，2026-05-23) —— HTTP-only 推送通知，第 23 个平台
 
 ### Discord 频道历史回填（v0.14.0+）
 
@@ -616,12 +619,27 @@ gateway 重启/崩溃后自动恢复被打断的 session。逻辑在 `gateway/se
 - **clarify 内联键盘**：`send_clarify()` 把多选澄清渲染成 `InlineKeyboardMarkup` 按钮回调（审批/更新提示也复用）。
 - **guest mention 模式**：`TELEGRAM_GUEST_MODE` 下，非白名单群成员仅能通过显式 @ 提及触发 bot。
 - **通知模式**：`notifications` 配置 `important`/`all`，静默发送中间态推送（`disable_notification=True`），除非 `metadata["notify"]=True`。
+- **群组 slash 命令保留**（`9451087`，2026-05-24）：群里观察到的 slash 命令不再被静默吞（`gateway/platforms/telegram.py:+6 行` + 34 行新测试）。
+
+#### 2026-05-24 平台细节修复簇
+
+- **Webhook 路由 fail closed + Svix 签名**（`bbf02c3`/`dbf73e9`/`15aa688`）：见 `[[security-defense-system]]` 同名段落 —— `gateway/platforms/webhook.py:383-395 + 690+` 增 Svix 签名 + 缺 secret 返 403。
+- **MSGraph Webhook 强制 client_state**（`4ca77f1`，#30169）：`msgraph_webhook.py:133-145` connect 拒绝 `_client_state is None`；`:316 _validate_client_state()` 在 expected 为 None 时返回 False（之前 True 等同未配 secret 全放行）。
+- **Feishu auth 三连**（#30739/#30744/#30746 + `f378f00`）：`gateway/platforms/feishu.py` URL verification token 先于 challenge 回显 + webhook secret 强制 + 审批按钮 chat-binding。
+- **QQBot 审批按钮 session-owner 授权**（`3e78e35`，#30737）：`qqbot/adapter.py:+54`。
+- **Discord role allowlist 旁路移除**（`c3caca6`，#30742）：`gateway/run.py:6329-6341` 删除早期 return。
+- **DingTalk 默认 allow-all 取消**（`1f897b0`，#30743）：`hermes_cli/gateway.py:_setup_dingtalk` 不再自动写 `DINGTALK_ALLOW_ALL_USERS=true`。
+- **DingTalk 断开前 finalize streaming 卡片**（`39b8d1d`）：`gateway/platforms/dingtalk.py:+13` 在 `_http_client.aclose()` 之前先 `_close_streaming_siblings`，防止 AI Card 卡死 streaming 状态。
+- **WeCom flush cancel-delivery 竞态防护**（`5848174`）：`gateway/platforms/wecom.py:619-628 _flush_text_batch` 加 `_pending_text_batch_tasks.get(key) is not current_task` 同步检查，关闭 sleep/cancel 重叠时 message silently dropped 的窗口（+89 行测试）。
+- **WeCom-callback token 失效自动 refresh**（`21db250`）：errcode 40001/42001 时 evict cache + 用新 token 单次重试（之前直到 TTL 7200s 才换 token）。
+- **Gateway debouncer + CodeQL 日志最小化**（`7abd627` + `1bed4e8`）：`gateway/platforms/base.py:4-7` debounce 调试日志删除 `event.text[:60]` 切片，改 `text_len=...`。
+- **Plugin transform_llm_output 流式可见性**：见 `[[interrupt-and-fault-tolerance]]` "Streaming 完成可见性" 章节 —— `gateway/run.py:17680-17717` `_transformed=True` 时编辑已 streamed message in-place 而非发重复，避免 plugin 修改不可见。
 
 ### 与其他 Agent 框架对比
 
 | 特性 | Hermes | OpenClaw | Claude |
 |------|--------|----------|--------|
-| 平台数量 | 23（18 内置 + 5 插件） | 14+ | 1 |
+| 平台数量 | 23（17 内置 + 6 插件） | 14+ | 1 |
 | 统一网关 | 单一进程 | 支持 | N/A |
 | 会话共享 | 跨平台 | 支持 | N/A |
 | 语音转录 | Telegram/Discord | 支持 | N/A |

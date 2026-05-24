@@ -177,6 +177,38 @@
 
 最终状态：45 概念页 + 2 实体页 + 26 changelog，跟踪 hermes-agent v0.14.0
 
+## [2026-05-24] update | 同步 hermes-agent/master HEAD `186bf25`（84 commits daily delta）
+
+- 对比基准: wiki master HEAD `4a950eb`（2026-05-23 sync at `874c2b1`），hermes-agent/master HEAD `186bf25`（2026-05-24 04:33 -0700）
+- 跨度 ~24 小时，**84 个 commit**（45 fix / 9 feat / 12 test / 5 docs / 5 chore / 3 refactor / 5 security），版本仍为 v0.14.0；验证基线 `/tmp/hermes-agent` clone @ `186bf25`
+- **新建 changelog/2026-05-24-update.md**（11 章 + 文件矩阵），所有 file:line 引用经 grep / Read 落地
+  - 安全 Wave 2（17 个 commit 时间集中在 04:24–04:54 -0700）—— Webhook fail-closed + Svix + 403、Dashboard WebSocket 强制 loopback、Docker dashboard 默认 loopback、Feishu/QQBot/Discord/DingTalk/MSGraph 审批授权链、API server placeholder secret、`response_store.db` + `webhook_subscriptions.json` 0o600、CodeQL 日志最小化
+  - ntfy 第 23 平台（3 提交链：feat → refactor 为 plugin → robust 加固）
+  - Plugin `register_auxiliary_task()` 新 hook API
+  - 跨 Profile 文件写入软护栏（`agent/file_safety.classify_cross_profile_target` + 三层接入）
+  - Streaming 完成可见性三连（guardrail halt 推到 stream / `response_transformed` 编辑 in-place / partial-stream `finish_reason=length`）
+  - Kanban `promote` 子命令（含 `--ids` bulk）+ `promoted_manual` 事件类型
+  - Skills AST 深度诊断（`audit --deep` / `inspect`）—— diagnostic hints 不影响 install gate
+  - Bitwarden EU + 自托管 server URL 支持
+  - `config.yaml model.provider` 单一 source of truth（删 `HERMES_INFERENCE_PROVIDER` env override）
+  - 平台/Tooling 修复簇（WeCom flush race / WeCom-callback token refresh / DingTalk finalize streaming / Telegram group slash / TUI viewport resize / Windows taskkill /T /F / browser 进程树终止 / mcp stdio ImportError / `.env` null-byte / Qwen refresh / TUI slash dropdown / TTS indicator / tool failure suffix / todo fraction / `tool_progress` 与 verbose 解耦）
+- **更新 12 个 concept 页面**：
+  - security-defense-system — 末尾追加"v0.14 增量安全 wave 2"，覆盖 17 个安全 commit + 跨 profile 软护栏（引 `webhook.py:383-395, 690+ + feishu.py:3293-3306 + msgraph_webhook.py:133-145, 316 + web_server.py:3296-3305 + auth.py:553-560 + api_server.py:337-385 + qqbot/adapter.py + base.py:4-7 + file_safety.py:312-373`）
+  - messaging-gateway-architecture — 22→23 平台（ntfy 插件），加 2026-05-24 平台细节修复簇章节
+  - hook-system-architecture — 顶部加 `register_auxiliary_task` API 引用；v2026.5.x 节追加详细说明（`hermes_cli/plugins.py:703-784`）
+  - auxiliary-client-architecture — 加"Plugin 注册新 auxiliary task slot"小节（含 `gateway/run.py:780-820` 桥接代码）
+  - kanban-multi-agent-board — 顶部加 2026-05-23 更新 note；CLI 表加 `promote` 子命令（含 `--ids` / `--force` / `--dry-run` / `--json`）
+  - skills-system-architecture — 末尾加 AST 深度诊断节（`tools/skills_ast_audit.py:84` + 与 Skills Guard 职责分离说明）
+  - cli-architecture — 工具调用预览段加失败具体错误 + todo 分数；新表 `hermes kanban promote` / `hermes skills audit --deep`；新增"安全/UX 微调"节
+  - terminal-backends — 加 `background=true` 静默 hint + Windows `taskkill /T /F` 章节
+  - interrupt-and-fault-tolerance — 加"Streaming 完成可见性三连"章节（guardrail halt + response_transformed 链 + partial-stream finish_reason）
+  - mcp-and-plugins — v0.13.0 表后加 v0.14.0 stdio SDK ImportError 修复
+  - context-compressor-architecture — 加 ABC 合规修复节（`total_tokens` / `api_mode` / 31 处 logger 切换）
+  - smart-model-routing — 加 `config.yaml model.provider` 单一 source of truth 章节
+  - agent-loop-and-prompt-assembly — 加 3 节：跨 Profile 软护栏 / Plugin `transform_llm_output` 流式抗冲突 / Background reviewer 允许改 pinned
+- **README.md / index.md / log.md**：跟踪 HEAD `874c2b1` → `186bf25`，最后更新 2026-05-23 → 2026-05-24，changelog 27 → 28
+- 验证策略: 每条结论都至少一条 grep / Read 命中 `/tmp/hermes-agent`；每个 file:line 引用现行 source 实际行号；功能描述对照对应 PR 标题 + commit body + 实际 hunk
+
 ## [2026-05-23] update | 同步 hermes-agent/master HEAD `874c2b1`（49 commits daily delta）
 
 - 对比基准: wiki master HEAD `2c31589`（2026-05-22 evening sync），hermes-agent/master HEAD `874c2b1`（2026-05-23 13:31 -0500）

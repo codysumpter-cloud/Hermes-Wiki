@@ -8,6 +8,8 @@ sources: [plugins/kanban/, hermes_cli/kanban.py, hermes_cli/kanban_db.py, hermes
 
 # Kanban 多 Agent 看板
 
+> **2026-05-23 更新**：新增 `hermes kanban promote <id> [--ids id...]` 子命令，手动 todo→ready 恢复（详见 § CLI 命令一览）。
+
 ## 概述
 
 Kanban 是 Hermes 在 v0.13 (v2026.5.7) 引入的**可持久化多 Agent 协作看板**。和 [[multi-agent-architecture]] 中的 4 种 in-process 机制（delegate_task / MoA / Background Review / send_message）不同，Kanban 是**跨 Session、跨 Profile、跨进程**的协调原语：
@@ -248,6 +250,7 @@ root (立即 done，做共享黑板)
 - `hermes kanban list [--mine] [--status s] [--assignee p]`
 - `hermes kanban show <id>` —— 详情 + 事件 + 评论
 - `hermes kanban complete/block/unblock/archive <id>`
+- `hermes kanban promote <task_id> [reason ...] [--ids id1 id2 ...] [--force] [--dry-run] [--json]` —— **手动 todo→ready 恢复路径**（2026-05-23，`d46adad`/`b207dc2`），用于 auto-promote daemon 漏掉的父任务 done 转换（issue #28822）；`--ids` 批量；写 `task_events` `kind="promoted_manual"` 与 daemon 自动 `kind="promoted"` 区分，audit 消费者可过滤人为；`--force` 父依赖未 done 也强行 promote。源码：`hermes_cli/kanban.py:553-584` + `hermes_cli/kanban_db.py:+71` 新方法 `promote_task()`
 
 ### Claim + dispatch
 - `hermes kanban claim <id> [--ttl 900]`

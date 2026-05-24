@@ -626,6 +626,16 @@ browser:
 
 `build_nvidia_nim_headers()`（`agent/auxiliary_client.py:380-384`）为 `integrate.api.nvidia.com` 流量附加云端归因头（`X-BILLING-INVOKE-ORIGIN: HermesAgent`），用于 NVIDIA NIM 调用的计费来源标记。
 
+## `config.yaml` `model.provider` 为单一 source of truth（2026-05-23，`e42fcc5`，#31222）
+
+`gateway/run.py:_resolve_runtime_agent_kwargs`：移除从 `HERMES_INFERENCE_PROVIDER` env 读取 provider 的早期分支。
+
+**之前**：`HERMES_INFERENCE_PROVIDER` env 可静默覆盖 `config.yaml model.provider`，从 gateway 路径切入时甚至完全 bypass config.yaml —— 行为漂移源。
+
+**之后**：gateway 走 `resolve_runtime_provider()` 单一入口（无 `requested` override），`config.yaml model.provider` 为唯一权威。Policy：**"如果不是 secret 就进 config.yaml"** —— env 仅保存凭据，行为配置进 yaml。
+
+文档同步更新 `website/docs/reference/environment-variables.md`、`website/docs/reference/cli-commands.md`、`website/docs/guides/minimax-oauth.md`、`website/docs/guides/xai-grok-oauth.md` 等 11 处。
+
 ## 与其他系统的关系
 
 - [[provider-transport-architecture]] — ProviderProfile 驱动 transport 单路径
