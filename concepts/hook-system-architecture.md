@@ -18,6 +18,7 @@ sources: [gateway/hooks.py, hermes_cli/plugins.py, model_tools.py, run_agent.py,
 > 后两个把 IRC、Teams、Google Chat 这样的**插件平台**纳入统一接口，不再需要在核心代码 if/elif。
 >
 > **`register_platform`** API 在 `hermes_cli/plugins.py:476` —— 插件注册新消息平台的入口。
+> **`register_auxiliary_task`** API 在 `hermes_cli/plugins.py:703`（2026-05-24，`e752c94`）—— 插件声明独立 auxiliary LLM task slot；config→env 桥与 picker 自动收录。
 
 # Hook 系统架构
 
@@ -483,6 +484,34 @@ def register(ctx):
 - **工具覆盖**：`register_tool(..., override=True)` 可替换内置工具（closes #11049）。
 - **Provider 注册门面**：`ctx.register_web_search_provider()`（详见 [[web-tools-architecture]]）、`ctx.register_video_gen_provider()`、`ctx.register_platform()`（详见 [[messaging-gateway-architecture]]）。model-provider 也以插件形式存在（`kind: model-provider`，详见 [[smart-model-routing]]）。
 - **Bundled observability 插件**：`plugins/observability/langfuse/` 通过 `pre/post_api_request`、`pre/post_llm_call`、`pre/post_tool_call` 钩子上报 trace。
+
+### `ctx.register_auxiliary_task()`（2026-05-24，`e752c94`）
+
+`hermes_cli/plugins.py:703-784 PluginContext.register_auxiliary_task(key, *, display_name, description, defaults=None)` —— 插件声明独立 auxiliary LLM task slot 的入口，不再需要触碰核心 `_AUX_TASKS` / `gateway/run.py` 的 env-bridging 字典。
+
+```python
+def register(ctx):
+    ctx.register_auxiliary_task(
+        key="memory_retain_filter",
+        display_name="Memory retain filter",
+        description="hindsight pre-retain dedup/extract",
+        defaults={"provider": "auto", "timeout": 30},
+    )
+```
+
+注册后该 task：
+
+1. **出现在 `hermes model → Configure auxiliary models` picker**，与内置 8 个 task（vision / compression / web_extract / approval / mcp / title_generation / skills_hub / curator）平级。
+2. **config.yaml `auxiliary.<key>` 块自动桥接到环境变量** `AUXILIARY_<KEY_UPPER>_{PROVIDER,MODEL,BASE_URL,API_KEY}`，gateway 启动时通过 `gateway/run.py:791-792 get_plugin_auxiliary_tasks()` 汇总循环写入（`gateway/run.py:780-820`）。
+3. **defaults dict 与 loaded config 合并**，未指定字段走默认（provider="auto"、model=""、base_url=""、api_key=""、timeout=60）；插件自有的额外字段（`extra_body` / `download_timeout` / 自定义）**保留不动**，schema 归插件所有。
+
+校验：
+
+- `key` 必须 snake_case、纯字母数字下划线、非空字符串。
+- **禁止 shadow 内置 task key**（lazy import `_BUILTIN_AUX_TASKS` 解循环），冲突时 `ValueError` 指引改 plugin-namespaced 名（如 `langfuse_classifier`）。
+- 跨插件重名时 `ValueError`（plugin 名比对）。
+
+Memory / context 类插件想加 hindsight pre-retain dedup 或 retrieval re-ranker 类的 auxiliary LLM，自此可完全 self-contained。
 
 ## 与其他系统的关系
 

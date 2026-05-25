@@ -325,6 +325,33 @@ DEVELOPER_ROLE_MODELS = ("gpt-5", "codex")
 
 实际切换发生在传输层 `agent/transports/chat_completions.py`（约第 231 / 410 行）：当模型名匹配 `DEVELOPER_ROLE_MODELS` 时，把首条消息的 `role` 从 `system` 改写为 `developer`。
 
+## 跨 Profile 文件写入软护栏（2026-05-24，`d3c167b`，#31290）
+
+新增 `agent/file_safety.py:312-373 classify_cross_profile_target(path)`：当文件目标落在**别的** Hermes profile 的 `skills/plugins/cron/memories` 区，返回 `{active_profile, target_profile, area, target_path}` dict；否则 `None`。
+
+三层接入：
+
+- **`tools/file_tools.py:177-205 _check_cross_profile_path`**：`write` / `edit` / `multi_edit` tool 调用前预检，新增 `cross_profile: bool = False` 形参。
+- **`tools/code_execution_tool.py:205,217`**：execute_code 内嵌 helper 向 model 暴露 `cross_profile`。
+- **`tools/skill_manager_tool.py:384-391`**：skill 安装路径冲突时 surface 同警告，要求 `cross_profile=True` 显式 opt-out。
+
+System prompt 现挂 hint：「edit only your profile unless asked」。不是 hard block —— 用户明确要求跨 profile 修改时模型可加 `cross_profile=True`。+259 行测试覆盖 13 个分支。详见 [[security-defense-system]] § 跨 Profile 文件写入软护栏。
+
+## Plugin `transform_llm_output` hook 与流式抗冲突（2026-05-24）
+
+`agent/conversation_loop.py:4081-4104` 在 tool-calling 循环之后、return 之前调 `_invoke_hook("transform_llm_output", ...)`，第一个返回非空字符串的 plugin 赢。新增 `_response_transformed` 标志写入 result dict（`:4152`）。
+
+之前 streaming 已发完时 gateway / ACP 都 silently skip final send，hook 修改不可见。完整流式可见性修复链详见 [[interrupt-and-fault-tolerance]] § "Streaming 完成可见性三连"。
+
+## Background reviewer 允许修改 pinned skill（2026-05-23，`2442a0c`）
+
+`agent/background_review.py:108-122` 改写 reviewer prompt：
+
+- 之前 `Protected skills (DO NOT edit these):` 把 bundled / hub-installed / **pinned** 全列在一起，pin 后的 skill 用户明确要改也会被 reviewer 拒（"Nothing to save."）。
+- 之后明确：`Pinned skills (marked via 'hermes curator pin') CAN be improved — pin only blocks deletion/archive/consolidation by the curator, not content updates.`
+
+pin 现仅保护 delete/archive/consolidation，patch 内容（pitfall / 缺步骤等）允许通过。
+
 ## 相关页面
 
 - [[aiagent-class]] — AIAgent 类实体页（构造函数与方法）

@@ -1,10 +1,10 @@
 ---
 title: 安全防御体系 — 多层注入检测
 created: 2026-04-07
-updated: 2026-05-21
+updated: 2026-05-24
 type: concept
-tags: [architecture, security, injection-defense, skills-guard, p0, supply-chain]
-sources: [tools/skills_guard.py, tools/tirith_security.py, tools/url_safety.py, agent/redact.py, agent/file_safety.py, tools/osv_check.py, cron/scheduler.py]
+tags: [architecture, security, injection-defense, skills-guard, p0, supply-chain, webhook-hardening]
+sources: [tools/skills_guard.py, tools/tirith_security.py, tools/url_safety.py, agent/redact.py, agent/file_safety.py, tools/osv_check.py, cron/scheduler.py, gateway/platforms/webhook.py, gateway/platforms/feishu.py, gateway/platforms/msgraph_webhook.py]
 ---
 
 > **v2026.5.7 安全 wave —— 8 个 P0 闭环**：
@@ -722,6 +722,55 @@ if effective_secret == _INSECURE_NO_AUTH and not _is_loopback_host(self._host):
 跟进 `0f8215f` / `789043b` 的 verdict-logic + `--force` limitation。原 block message 不论 verdict 都末尾接 "Use --force to override"，但 `--force` 已经在 dangerous community/trusted skill 上无效化，把用户绕进死循环。
 
 `tools/skills_guard.py` 改成：dangerous verdict 走特定 message 解释**为什么** `--force` 不再有效，非 dangerous block 继续 pin 旧的 `--force` hint。+2/+1 回归测试。
+
+## v0.14 增量安全 wave 2（2026-05-24，17 个 commit）
+
+PR `#30737`–`#30746` 与若干旁支共 17 个 commit 在 2026-05-24 04:24–04:54 -0700 一次性合并，目标是**关闭 v0.14.0 残余 auth-bypass / 信息泄露 / 不安全默认值**。
+
+### Webhook fail-closed + Svix 签名 + 403 替换 500
+
+`gateway/platforms/webhook.py`：
+
+1. **缺 secret 路由 fail closed**（`dbf73e9`）：handler 在连接前/动态 reload 后路径都校验 effective secret，缺失返 **403 Forbidden**（`webhook.py:383-395`），不再静默放行 hot-reloaded dynamic route。
+2. **403 而非 500**（`15aa688`）：missing-secret 拒绝 path 不再 500（`webhook.py:394`），运维 incident alerting 不再被 config drift 误触。
+3. **Svix 签名校验**（`bbf02c3`，#30200）：新增 `_validate_svix_signature()`（`webhook.py:690+`）。AgentMail / Resend / Loops / Knock 等 Svix-broadcast webhook header（`svix-id` / `svix-timestamp` / `svix-signature`，base64 HMAC，secret 前缀 `whsec_`）自动识别并 timing-safe 校验；`delivery_id` 优先用 `svix-id`（`webhook.py:489-493`）。
+4. **默认 webhook toolset 收紧**（`e4a1220`，#30745）：`toolsets.py:75-82 _HERMES_WEBHOOK_SAFE_TOOLS = ["web_search", "web_extract", "vision_analyze", "clarify"]` —— `hermes-webhook` toolset 不再继承 `_HERMES_CORE_TOOLS`（`toolsets.py:536`）。webhook payload 多含 untrusted 第三方内容（公开 PR title/comment 等），默认无 shell/file/code 执行能力。
+
+### Dashboard / API server / Docker 默认值收紧
+
+- **Dashboard WebSocket 强制 loopback**（`9732559`，#30741）：`hermes_cli/web_server.py:3296-3305` 删除 `_is_public_bind()`，`_ws_client_is_allowed()` 不再为 `--insecure` 模式（`bound_host ∈ {0.0.0.0, ::}`）放宽 WebSocket。`--insecure` 仅对 HTTP API 有效（session token 守），WebSocket 始终只接 `127.0.0.1 / ::1 / localhost / testclient`。
+- **Docker dashboard 默认 loopback**（`2df2f91`，#30740）：`docker/entrypoint.sh:111-130` `HERMES_DASHBOARD_HOST` 默认 `127.0.0.1`（之前 `0.0.0.0`），不再自动 `--insecure`。要外暴露必须用户显式覆盖 + 自带反向代理。
+- **Dashboard 插件 rescan 需 auth**（`ee002e7`，#27340）：移除 `hermes_cli/web_server.py` 的 `rescan` route 例外，对齐其他 dashboard write endpoint。
+- **API server placeholder secret 扩展**（`be27bfe`，#30738）：`hermes_cli/auth.py:553-560 _PLACEHOLDER_SECRET_VALUES` 新增 `"your_api_key_here"`，常见样板值不再被误判为有效凭证。
+
+### 平台审批/Webhook 授权链
+
+- **Feishu URL verification 先于 challenge 回显**（`f378f00`）：`gateway/platforms/feishu.py:3293-3306` —— `verification_token` 校验**先**于 `url_verification` 挑战回显。攻击者发任意 challenge 字符串证明端点控制的 OOB-内容-注入路径关闭。
+- **Feishu Webhook secret 强制 + extras 通路**（`197f63f`，#30746）：`feishu.py:1647` `connection_mode == "webhook"` 必须配 `verification_token` 或 `encrypt_key`；config `extra.verification_token` / `extra.encrypt_key` 现尊重。
+- **Feishu 审批按钮 auth + chat binding**（`bdb97b8` #30744 + `485292a` #30739）：交互式 exec approval 与按钮 callback 校验 token + chat 绑定，他人无法通过点击别人会话中的按钮触发命令。
+- **QQBot 审批按钮按 session owner 授权**（`3e78e35`，#30737）：`gateway/platforms/qqbot/adapter.py:+54 行` + 51 行新测试。
+- **Discord role allowlist auth bypass 关闭**（`c3caca6`，#30742）：删除 `gateway/run.py:6329-6341` 的 `DISCORD_ALLOWED_ROLES` 早期 return（之前只要配 role allowlist 任何 on_message 预过滤通过的消息直接 authorize，绕过 pairing store / user allowlist）。role 现仅为 pre-filter，最终授权走 pairing/user 检查。
+- **DingTalk 默认 allow-all 关闭**（`1f897b0`，#30743）：`hermes_cli/gateway.py:_setup_dingtalk` 不再 QR setup / 手动配置末尾自动写 `DINGTALK_ALLOW_ALL_USERS=true`。setup 完毕的默认状态符合最小特权。
+- **MSGraph Webhook 强制 client_state**（`4ca77f1`，#30169）：`gateway/platforms/msgraph_webhook.py:133-145` —— `connect()` 拒绝 `_client_state is None`；`:316 _validate_client_state()` 在 expected 为 None 时**返回 False**（之前 `True` —— 等同未配 secret 全放行）。
+
+### 状态文件权限收紧（`3bace07`）
+
+- `gateway/platforms/api_server.py:337-385`：`ResponseStore.__init__` 末尾调用新增 `_tighten_file_permissions()`（`api_server.py:374`），把 `response_store.db` + `-wal` + `-shm` 三个 sidecar chmod 到 `0o600`。设计取舍：原 PR `#30917` 是每次 `_commit()` 后 chmod，hot path 太贵；改 chmod-on-create + 信任 inode（SQLite 不重置 mode bits 跨 write）。
+- `hermes_cli/webhook.py:28,51-95 _save_subscriptions`：改写 `webhook_subscriptions.json` 为 `tempfile.mkstemp` → chmod `0o600` → atomic rename，rename 后**重新 assert** `0o600`（兼容历史 `0o644` 文件）。`os.name=='nt'` 跳过（POSIX mode 不适用）。
+
+### CodeQL / 日志最小化
+
+`gateway/platforms/base.py:4-7`（`1bed4e8`）：debounce 调试日志删除 `event.text[:60]` 切片，改 `text_len=...` —— CodeQL `py/clear-text-logging-sensitive-data` 警告闭合，调试 burst 行为信息保留。
+
+### 跨 Profile 文件写入软护栏（`d3c167b`，#31290）
+
+`agent/file_safety.py:312-373 classify_cross_profile_target(path)` —— 当文件目标落在**别的** Hermes profile 的 `skills/plugins/cron/memories` 时返回 `{active_profile, target_profile, area, target_path}` dict。三层接入：
+
+- `tools/file_tools.py:177-205 _check_cross_profile_path` —— `write` / `edit` / `multi_edit` 预检，新增 `cross_profile: bool = False` 形参。
+- `tools/code_execution_tool.py:205,217` —— execute_code 内嵌 helper 同向 model 暴露 `cross_profile`。
+- `tools/skill_manager_tool.py:384-391` —— skill 安装路径冲突同 warning，要求 `cross_profile=True` 显式 opt-out。
+
+非 hard block —— 用户明确要求跨 profile 修改时模型可加 `cross_profile=True`。+259 行测试覆盖 13 个分支。
 
 ## 相关页面
 

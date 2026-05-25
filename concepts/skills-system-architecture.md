@@ -564,6 +564,27 @@ skills:
 - **不可见 unicode 检测**（`tools/skills_guard.py:581-594`）：零宽连接符、方向覆盖、用于注入的 BOM
 - **内容哈希**：skill 目录 SHA-256，完整性追踪
 
+## AST 深度诊断（2026-05-23，`tools/skills_ast_audit.py:84`）
+
+`hermes skills audit [name] --deep` 与 `hermes skills inspect <identifier>` 触发 `ast_scan_path(path)`（`hermes_cli/main.py:12324-12333` flag 定义；`hermes_cli/skills_hub.py:938-950` 接入）—— 在 Skills Guard 的 regex 之上补一层 **AST 级动态构造识别**：
+
+- `importlib.import_module(computed)` / `__import__(computed)`
+- `getattr(obj, computed)` / `obj.__dict__[computed]`
+- 其他通过运行时 string 拼接绕开静态 regex 的 import / attribute access
+
+输出 label 为 **"diagnostic hints"**，不是 "security verdict"：
+
+| 文件 | 行 | pattern_id | 说明 |
+|------|----|-----------|------|
+| ... | ... | ... | ... |
+
+**与 Skills Guard 的关系**：
+
+- `tools/skills_guard.py` 是 **install gate**（block / allow / confirm）。
+- `tools/skills_ast_audit.py` 是 **review aid**（人工审阅时辅助，不影响 install 决策）—— `--deep` 是 opt-in，不默认开启。
+
+设计取舍（`7255050 feat` → `4254f7d refactor` 一日内裁掉 600 行）：原 PR 用 dataclass + severity field + 三个 entry point；refactor 合并为单 `ast_scan_path(path)` + `(file, line, pattern_id, description)` 元组，移除 severity（与 install gate 职责重叠）。
+
 ## 相关页面
 
 - [[prompt-builder-architecture]] — 技能索引构建与条件激活

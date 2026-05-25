@@ -310,6 +310,29 @@ export AUXILIARY_WEB_EXTRACT_BASE_URL=https://my-endpoint/v1
 export AUXILIARY_WEB_EXTRACT_API_KEY=sk-xxx
 ```
 
+### Plugin 注册新 auxiliary task slot（2026-05-24，`e752c94`）
+
+`hermes_cli/plugins.py:703 PluginContext.register_auxiliary_task(key, ...)` 让插件声明自有 auxiliary task slot 而不动核心。详见 [[hook-system-architecture]] "v2026.5.x 插件增强 → `ctx.register_auxiliary_task()`"。
+
+gateway 启动时：
+
+```python
+# gateway/run.py:780-820 _resolve_runtime_agent_kwargs
+_aux_bridged_keys = {"vision", "web_extract", "approval"}
+try:
+    from hermes_cli.plugins import get_plugin_auxiliary_tasks
+    for _entry in get_plugin_auxiliary_tasks():
+        _aux_bridged_keys.add(_entry["key"])
+except Exception:
+    pass
+
+for _task_key in _aux_bridged_keys:
+    _task_cfg = _auxiliary_cfg.get(_task_key, {})
+    # ... 桥接 provider/model/base_url/api_key 到 AUXILIARY_<KEY>_*
+```
+
+`get_plugin_auxiliary_tasks()`（`hermes_cli/plugins.py:1668`）汇总所有插件注册的 task entry，循环统一桥接，避免每个插件 fork 核心。
+
 ### 查看可用视觉后端
 
 ```python

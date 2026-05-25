@@ -130,6 +130,10 @@ async def authenticate_mcp_server(server_config: dict) -> dict:
 | **Keepalive on long-lived lifecycle waits** | 长 init / shutdown 不会被 idle timeout 杀掉 |
 | **TOCTOU 修复** | `mcp_oauth.py` 关闭 check-then-use 窗口（v0.13.0 安全 wave，详见 [[security-defense-system]]） |
 
+### v0.14.0 MCP stdio SDK 缺失诊断（2026-05-23，`5acaeba`，#31450）
+
+`tools/mcp_tool.py:+9 行` —— stdio MCP SDK（`mcp.client.stdio`）缺失时，调用 `_run_stdio` 抛 `ImportError` 并附带安装指引（"pip install mcp"），不再抛 `NameError: name '_stdio_client' is not defined`（原因：try/except ImportError 把 import 静默吞，names 留在 module scope 未绑定）。对齐 `_run_http` 早已存在的 `_MCP_HTTP_AVAILABLE` gate。
+
 ## 插件系统
 
 ```python
