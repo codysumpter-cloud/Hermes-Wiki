@@ -1,10 +1,10 @@
 ---
 title: Messaging Gateway Architecture
 created: 2026-04-07
-updated: 2026-05-26
+updated: 2026-05-27
 type: concept
-tags: [gateway, architecture, module, telegram, discord, messaging, qq, teams, line, simplex, ntfy, wecom, proxy]
-sources: [gateway/run.py, gateway/platforms/, gateway/delivery.py, plugins/platforms/, hermes_cli/config.py, gateway/platforms/wecom_callback.py]
+tags: [gateway, architecture, module, telegram, discord, messaging, qq, teams, line, simplex, ntfy, wecom, proxy, api-server]
+sources: [gateway/run.py, gateway/platforms/, gateway/platforms/api_server.py, gateway/delivery.py, plugins/platforms/, hermes_cli/config.py, gateway/platforms/wecom_callback.py]
 ---
 
 # 消息网关架构
@@ -757,12 +757,73 @@ def _looks_like_telegram_private_chat_id(chat_id: Optional[str]) -> bool:
 
 跟进 `31c8d5ff5`：把 defusedxml import 包 try/except（同 `aiohttp` / `httpx` 兼容模式），set `DEFUSEDXML_AVAILABLE` flag；`check_wecom_callback_requirements()` 检 flag，缺 dep 时 log 实际缺什么 + skip adapter（不再 hard import crash）；`pyproject.toml` 新加 `[wecom] extra` with `defusedxml==0.7.1`；`tools/lazy_deps.py` 注册触发 lazy install prompt。
 
+## 2026-05-27 wave — Telegram 多修复 + API Server CRUD + Signal/Slack/Google Chat 小修
+
+### Telegram 后续 wave
+
+在 2026-05-26 DM topic 6 连之上又叠加多修复：
+
+| Commit | 行为 |
+|--------|------|
+| `9acf949` | **feat: edit status messages in place instead of appending (#30864)** — 状态消息原位编辑 |
+| `1ac8deb` | **feat(gateway): stream Telegram edits safely** — 流式 chunks 安全编辑同一消息 |
+| `0325e18` | **fix(gateway): keep Telegram heartbeat + interim commentary on; edit heartbeat in place (#33187)** |
+| `95a0955` | **fix(gateway): restore Telegram DM topic thread_id after session split (#27166)** |
+| `3ec28f3` | **fix(telegram): preserve topic metadata on overflow edits** |
+| `b38140e` | **fix(gateway): allow chat-scoped telegram auth without sender user_id** |
+| `d81b888` | **fix(telegram): report cron topic fallback** |
+| `16d8e44` | **fix(telegram): add DM topic typing fallback when message_thread_id rejected** |
+| `aef297a` | **fix(telegram): skip send_chat_action for DM topic reply-fallback lanes** |
+| `b323957` | **fix(telegram): preserve DM topic routing via reply fallback** |
+| `ae005ec` | **fix(send_message): map Telegram General topic id to None for forum groups (#22423)** |
+| `60f84c6` | **gateway: quiet Telegram operational chatter** |
+| `efa9525` | **fix: ignore Telegram start pings** |
+| `8807b1c` | **fix(gateway): hide telegram compaction status noise** |
+| `9d789f3` | **feat: add disable_topic_auto_rename gateway flag** |
+| `ad2531b` | **feat: skip-STT audio path + 2GB cap via local Bot API server** |
+| `a724c3b` | **feat: pin incoming user message for duration of agent turn** |
+| `c931dad` | **feat: ignore_root_dm with system command lobby** |
+| `b1acf80` | **feat: support quick-command-only menus** |
+
+### API Server CRUD（OpenAI-compatible 网关增强）
+
+`gateway/platforms/api_server.py` 大幅扩展（commit `f7527b0` +476 行 + #33016）：
+
+- **Session 控制**：新端点让外部客户端 CRUD session（前提：API_SERVER_KEY Bearer）
+- **`GET /v1/skills`**（#33016）—— 列已安装 skill（name/description/category）
+- **`GET /v1/toolsets`**（#33016）—— 列 `api_server` 平台 resolved toolset + 展开的 tool name
+- 全部受 `API_SERVER_KEY` Bearer scheme 保护
+- `/v1/capabilities` 广告 `skills_api` + `toolsets_api` 两个新能力（`9622326`）
+- session chat API 支持媒体输入（`464b51d`）
+
+> 解决场景：先前外部客户端只能起 dashboard web server，或通过 chat 让 model 列 skill —— 现在 deterministic、不引入 model cost。
+
+### Signal / Google Chat / Slack 小修
+
+- `7f40767` **feat(signal): add `require_mention` filter for group chats**
+- `c386400` **fix(security): honor relay-declared sender_type in Google Chat adapter to prevent BOT filter bypass**
+- `8578f89` **test(google-chat): cover relay-declared sender_type honoring**
+- `24d3216` **fix(slack): enable writable app home DMs in manifest**
+
+### Voice-mode 容器化音频桥
+
+- `bde487c` **fix(voice): honor `PULSE_SERVER`/`PIPEWIRE_REMOTE` inside Docker (#21203)**
+- `30dd554` **fix(voice_mode): generalize container phrasing and use `$XDG_RUNTIME_DIR`**
+
+### Gateway/SQLite 杂项
+
+- `dbafa08` **fix(cron): avoid delivery origin as sender identity**
+- `e572737` **Fix cron dashboard rendering for partial jobs** + `e407376` partial job records normalize + `96dc272` getJobState helper
+- `2a7047c` **fix(sqlite): fall back to `journal_mode=DELETE` on NFS/SMB/FUSE (#22043)** —— 当 sessions.db 跑在网络共享盘时 WAL 不可用，自动降级
+- `78b0008` **fix(gateway): also catch restart TimeoutExpired; friendly message** + `dccf1fb` cap adapter disconnect during stop
+
 ## 相关页面
 
 - [[gateway-session-management]] — 网关会话管理架构
 - [[cron-scheduling]] — Cron 调度器由网关驱动
 - [[hook-system-architecture]] — 网关事件钩子系统
-- [[security-defense-system]] — Webhook 硬化、Gateway 平台审批授权链、WeCom callback defusedxml
+- [[security-defense-system]] — Webhook 硬化、Gateway 平台审批授权链、WeCom callback defusedxml、API server key placeholder
+- [[dashboard-auth-oauth-gate]] — Dashboard 鉴权独立闸门（与 api_server Bearer scheme 互补）
 
 ## 相关文件
 
@@ -772,5 +833,6 @@ def _looks_like_telegram_private_chat_id(chat_id: Optional[str]) -> bool:
 - `gateway/delivery.py` — 消息投递（含 2026-05-26 `_looks_like_telegram_private_chat_id` DM topic 直发分支）
 - `gateway/config.py` — 网关配置
 - `gateway/platforms/` — 平台适配器目录
+- `gateway/platforms/api_server.py` — **2026-05-27** Session CRUD + GET /v1/skills + /v1/toolsets（+476 行）
 - `gateway/platforms/wecom_callback.py:20-24` — **NEW 2026-05-26** defusedxml + `DEFUSEDXML_AVAILABLE` flag
 - `hermes_cli/gateway.py` — Gateway CLI 命令

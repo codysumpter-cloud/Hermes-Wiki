@@ -72,7 +72,7 @@ def crawl(self, url: str, **kwargs: Any) -> Any: ...
 
 ### 七大 Provider 插件
 
-`plugins/web/` 下现有 7 个内置 provider 插件（`plugin.yaml` 中 `kind: backend`）：
+`plugins/web/` 下现有 **8 个**内置 provider 插件（`plugin.yaml` 中 `kind: backend`）：
 
 | Provider | name | Search | Extract | Crawl | 认证 / 依赖 |
 |---|---|---|---|---|---|
@@ -83,8 +83,13 @@ def crawl(self, url: str, **kwargs: Any) -> Any: ...
 | **SearXNG** | `searxng` | ✅ | ❌ | ❌ | `SEARXNG_URL`（自托管实例） |
 | **Brave (Free)** | `brave-free` | ✅ | ❌ | ❌ | `BRAVE_SEARCH_API_KEY`（免费层） |
 | **DDGS** | `ddgs` | ✅ | ❌ | ❌ | 无 Key，需 `ddgs` Python 包 |
+| **xAI Web Search** ✨ | `xai` | ✅ | ❌ | ❌ | Grok OAuth（via `hermes auth`）或 `XAI_API_KEY` |
+
+**新增 xAI Web Search**（commit `a0c0312`，2026-05-27）：`plugins/web/xai/` 接入 Grok 的 agentic web_search 工具（Responses API）。`plugin.yaml: web-xai` + `provides_web_providers: [xai]`。docs `43c7a1b`「docs(web-search): document xAI Web Search backend (#29052)」。
 
 **Crawl 仅 Firecrawl 与 Tavily 支持**（`agent/web_search_registry.py:251`）。注意差异：Tavily 的 crawl 支持自然语言 `instructions`；Firecrawl 的 `/crawl` 端点不接受 instructions（属 `/extract` 功能），其插件会记录并丢弃该参数（`plugins/web/firecrawl/provider.py:610`）。
+
+**Firecrawl integration tag**（`273ff5c`）：Firecrawl 客户端现在在 user-agent 里加 Hermes 集成标识，用于使用追踪。
 
 ### 注册表分发路径
 

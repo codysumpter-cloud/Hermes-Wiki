@@ -1,10 +1,10 @@
 ---
 title: Hook 系统架构
 created: 2026-04-08
-updated: 2026-05-17
+updated: 2026-05-27
 type: concept
-tags: [architecture, module, extensibility, mcp, plugins]
-sources: [gateway/hooks.py, hermes_cli/plugins.py, model_tools.py, run_agent.py, gateway/platform_registry.py]
+tags: [architecture, module, extensibility, mcp, plugins, dashboard-auth]
+sources: [gateway/hooks.py, hermes_cli/plugins.py, model_tools.py, run_agent.py, gateway/platform_registry.py, hermes_cli/dashboard_auth/registry.py]
 ---
 
 > **v2026.5.7 新增钩子**：
@@ -18,7 +18,17 @@ sources: [gateway/hooks.py, hermes_cli/plugins.py, model_tools.py, run_agent.py,
 > 后两个把 IRC、Teams、Google Chat 这样的**插件平台**纳入统一接口，不再需要在核心代码 if/elif。
 >
 > **`register_platform`** API 在 `hermes_cli/plugins.py:476` —— 插件注册新消息平台的入口。
-> **`register_auxiliary_task`** API 在 `hermes_cli/plugins.py:703`（2026-05-24，`e752c94`）—— 插件声明独立 auxiliary LLM task slot；config→env 桥与 picker 自动收录。
+> **`register_auxiliary_task`** API 在 `hermes_cli/plugins.py:825`（2026-05-24，`e752c94`）—— 插件声明独立 auxiliary LLM task slot；config→env 桥与 picker 自动收录。
+> **`register_tts_provider`** 在 `hermes_cli/plugins.py:685`（2026-05-25）/ **`register_transcription_provider`** 在 `:723`（2026-05-25）—— TTS 与 STT provider 插件化（见 [[voice-mode-architecture]]）。
+>
+> **2026-05-27 新增钩子**：
+>
+> | 钩子 | 源码 | 用途 |
+> |------|------|------|
+> | **`register_dashboard_auth_provider`** | `hermes_cli/plugins.py:558` | 注册 dashboard OAuth provider；当 dashboard 绑定非 loopback 主机且无 `--insecure` 时启用（见 [[dashboard-auth-oauth-gate]]） |
+> | **`standalone_sender_fn`**（`93e25ce`） | 平台插件注册时 | 让 plugin 实现 no-deps sender callable，cron scheduler 不启 gateway 也能投递消息 |
+>
+> Provider 注册全表（PluginContext 上 8 个 register_*）：image_gen `:540` / dashboard_auth `:558` / video_gen `:598` / web_search `:625` / browser `:653` / tts `:685` / transcription `:723` / auxiliary_task `:825`。
 
 # Hook 系统架构
 
