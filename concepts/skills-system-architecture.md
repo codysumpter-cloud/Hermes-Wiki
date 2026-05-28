@@ -646,6 +646,37 @@ raise ValueError(
 
 设计原则：三者均归 `optional-skills/`（"when in doubt, optional"），install-on-demand 而非默认加载。`openhands` 的 SKILL.md 经 verified install (`uv tool install openhands --python 3.12`) 重写，因原 PR 的 SKILL.md 由 OpenHands agent 自身起草，幻觉了 `--model` / `--max-iterations` / `--workspace` / `--sandbox docker` 等不存在的 flag。
 
+## BrowseShSource — 第 8 个 catalog 源（2026-05-27 NEW）
+
+`tools/skills_hub.py:2429 BrowseShSource(SkillSource)`（commit `57145ca`）：
+
+- **来源**：[browse.sh](https://browse.sh) — Browserbase 维护的 **200+ 站点专用浏览器自动化 SKILL.md** 目录（Airbnb / Amazon / arXiv / Discord / GitHub / Linkedin / Notion / Stripe ...）
+- **API**：
+  - 目录列表 `https://browse.sh/api/skills`
+  - 单 skill 详细 `https://browse.sh/api/skills/{slug}` 返回 `skillMdUrl` CDN URL
+- **设计取舍**：catalog 的 `sourceUrl` 是 GitHub HTML URL，但底层 repo 不一定公开，所以**不依赖**它作内容拉取
+- **trust level**：`community`（同其它非 NousResearch 维护源）
+- **source_id**：`browse-sh`
+- 已纳入 `scripts/build_skills_index.py:264,297` + `hermes_cli/main.py:12451` 的 catalog source 表，与 `EXPECTED_FLOORS = 50`（`scripts/build_skills_index.py:336`）
+
+加上既有的 7 个（GitHub / WellKnown / Url / SkillsSh / ClawHub / ClaudeMarketplace / LobeHub），共 **8 个 catalog source** 接入 Skills Hub。
+
+## Skills 修复簇（2026-05-27 NEW）
+
+| Commit | 修复 |
+|--------|------|
+| `0537e26` | **fix(skills): atomic lock write + drop dead `_validate_category_name`** —— 防止 lock 文件 race 留半成品 |
+| `ee80dfd` | **fix: preserve skill packages during curator consolidation** —— curator 整合时不再误删 package skill |
+| `f040710` | **fix: backfill official optional skill provenance** —— 老版本安装的官方 optional skill 在新 manifest 下补回 provenance |
+| `a38e283` | **fix: preserve nested official skill install paths** —— 嵌套 install 路径在 consolidation 后保留 |
+| `58591d9` | **feat: show names of user-modified skills in bundled skill sync summary** —— sync 摘要里高亮被用户改过的 skill |
+| `7255050` | **feat(skills): add opt-in AST deep diagnostics** —— `audit --deep` / `inspect` 子命令开启 AST 深扫 |
+| `291a158` | **fix(skills): move `platforms` key out of folded `description: >` scalars** —— YAML 折叠语法导致 `platforms` 误解析为 description 的部分（Windows 平台过滤跑空） |
+
+### 7 个 Linux/macOS-only Skills 在 Windows 上 gate
+
+`b18b17f`「feat(skills): gate 7 Linux/macOS-only skills from Windows via platforms frontmatter」+ `98db898` / `db22efb`（79 个内置 + 63 个 optional skill declare 平台）—— Windows 用户不再误装跑不通的 skill。
+
 ## 相关页面
 
 - [[prompt-builder-architecture]] — 技能索引构建与条件激活
@@ -673,3 +704,4 @@ raise ValueError(
 - `optional-skills/security/web-pentest/SKILL.md` — **NEW 2026-05-26** Web 渗透测试 skill
 - `optional-skills/autonomous-ai-agents/openhands/SKILL.md` — **NEW 2026-05-26** OpenHands CLI delegation skill
 - `optional-skills/software-development/code-wiki/SKILL.md` — **NEW 2026-05-26** 代码 wiki 生成 skill
+- `tools/skills_hub.py:2429 BrowseShSource` — **NEW 2026-05-27** browse.sh 第 8 个 catalog 源（Browserbase 200+ 站点专用浏览器自动化 SKILL.md）

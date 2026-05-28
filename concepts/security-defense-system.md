@@ -1,10 +1,10 @@
 ---
 title: 安全防御体系 — 多层注入检测
 created: 2026-04-07
-updated: 2026-05-26
+updated: 2026-05-27
 type: concept
-tags: [architecture, security, injection-defense, skills-guard, promptware-defense, p0, supply-chain, webhook-hardening]
-sources: [tools/threat_patterns.py, tools/skills_guard.py, tools/memory_tool.py, agent/tool_dispatch_helpers.py, tools/tirith_security.py, tools/url_safety.py, agent/redact.py, agent/file_safety.py, agent/subdirectory_hints.py, tools/osv_check.py, cron/scheduler.py, hermes_cli/config.py, hermes_cli/web_server.py, gateway/platforms/webhook.py, gateway/platforms/wecom_callback.py, gateway/platforms/feishu.py, gateway/platforms/msgraph_webhook.py, web/src/components/Markdown.tsx]
+tags: [architecture, security, injection-defense, skills-guard, promptware-defense, p0, supply-chain, webhook-hardening, dashboard-auth, security-guidance]
+sources: [tools/threat_patterns.py, tools/skills_guard.py, tools/memory_tool.py, agent/tool_dispatch_helpers.py, tools/tirith_security.py, tools/url_safety.py, agent/redact.py, agent/file_safety.py, agent/subdirectory_hints.py, tools/osv_check.py, cron/scheduler.py, hermes_cli/config.py, hermes_cli/web_server.py, gateway/platforms/webhook.py, gateway/platforms/wecom_callback.py, gateway/platforms/feishu.py, gateway/platforms/msgraph_webhook.py, web/src/components/Markdown.tsx, hermes_cli/dashboard_auth/base.py, hermes_cli/dashboard_auth/middleware.py, plugins/dashboard_auth/nous/__init__.py, plugins/security-guidance/patterns.py, plugins/security-guidance/__init__.py]
 ---
 
 > **v2026.5.7 安全 wave —— 8 个 P0 闭环**：
@@ -887,6 +887,54 @@ content_types = {".js", ".mjs", ".css", ".json", ".html",
 ### Cron Scanner 二级分裂（fix #32339）
 
 详见 [[cron-scheduling]]。`tools/cronjob_tools.py:186-227` 拆 `_scan_cron_prompt`（strict，用户 prompt）+ `_scan_cron_skill_assembled`（loose，含 skill content 的 assembled prompt）；`cron/scheduler.py:1170-1191` 按 `has_skills` 选 scanner。修复 v0.13 P0 #21350 的反向回归 —— 命令形 pattern 在 skill 的 security postmortem 散文里**长期 false positive**，导致 11 个 PR-scout cron 任务静默 block 数周。
+
+## v0.14 增量 — 2026-05-27 Wave 4（Dashboard OAuth + security-guidance + 凭据/webhook 加固）
+
+> 详细 changelog：[[2026-05-27-update]]
+
+### Dashboard OAuth 鉴权闸门（major NEW）
+
+完整新页见 [[dashboard-auth-oauth-gate]]。要点：
+
+- **触发**：dashboard 绑定非 loopback 主机且未带 `--insecure` 时 `auth_required = True`，加载 `AuthGateMiddleware`
+- **可插拔 ABC**：`hermes_cli/dashboard_auth/base.py:65 DashboardAuthProvider` 5-方法生命周期 + `assert_protocol_compliance()` + 3 类异常（`ProviderError`→503 / `InvalidCodeError`→400 / `RefreshExpiredError`→302→/login）
+- **Nous OAuth Provider**：`plugins/dashboard_auth/nous/__init__.py`（582 行）—— RS256 JWT + JWKS 5min cache + `agent_instance_id` claim 与 client_id suffix 交叉校验 + `agent_dashboard:access` 单 scope + PKCE
+- **WS 单次性 ticket**：`hermes_cli/dashboard_auth/ws_tickets.py`（30s TTL、`secrets.token_urlsafe(32)`、单次 consume）—— 浏览器 WS upgrade 无法带 Authorization header 的 workaround
+- **fail-closed**：无 provider 注册时 dashboard 拒绝启动 + `proxy_headers` 仅在 gated 时启用 + 抑制 SPA bundle 的 `_SESSION_TOKEN` 注入
+- **Plugin Hook**：`hermes_cli/plugins.py:558 register_dashboard_auth_provider`
+
+### security-guidance 插件 — 25 条 dangerous-pattern 警告（#33131）
+
+**新插件** `plugins/security-guidance/`（259 + 368 行；非阻塞为默认）：
+
+- `transform_tool_result` + `pre_tool_call` hook 扫描 `write_file` / `patch` / `skill_manage` 写入内容
+- 25 条 `SECURITY_PATTERNS`（`patterns.py:53`）：`pickle.load` / `yaml.load` / `eval(` / `os.system` / `subprocess(shell=True)` / `child_process.exec` / `dangerouslySetInnerHTML` / `innerHTML` / `outerHTML` / `document.write` / `insertAdjacentHTML` / `crypto.createCipher`（no IV） / AES ECB / TLS `verify=False` / XXE `xml.etree`+`minidom` / `<script src=//...>` 无 SRI / `torch.load`（无 `weights_only=True`） / GH Actions `${{ github.event.* }}` 注入
+- **非阻塞**为默认：文件已写入，警告附加到 tool result 让模型自我纠正
+- `SECURITY_GUIDANCE_BLOCK=1` 升级阻塞 / `SECURITY_GUIDANCE_DISABLE=1` killswitch
+- **来源**：`patterns.py` 是 Anthropic `claude-plugins-official @ 0bde168` 的 Apache-2.0 verbatim fork，`LICENSE` + `NOTICE` 保留归属。Hermes 端 plugin glue（`__init__.py` + `plugin.yaml` + 测试）原创。
+
+### 凭据/Webhook/file-safety 加固簇
+
+- **`security: harden API server key placeholder handling`（#30738, `be27bfe`）** —— api_server.py placeholder secret 不再可绕过认证
+- **`Harden msgraph webhook auth requirements`（#30169, `4ca77f1`）** —— msgraph webhook 强制完整签名校验
+- **`security: restrict default webhook toolset capabilities`（#30745, `e4a1220`）** —— webhook 默认 toolset 范围收紧
+- **`security(file-safety): write-deny <root>/.env when running under a profile`（#15981, `5edb346`）** —— 跨 profile `.env` 写防护补完
+- **`fix(file-safety): block read_file on HERMES_HOME credential stores`（#17656, `056e00a`）** —— `read_file` 显式拒绝读 credentials.json / auth.json / nous_auth.json / .env 等
+- **`fix(security): derive <VENDOR>_API_KEY from host as final credential fallback`（`c6a992e`）** —— 凭据池 fallback 不再退到 plaintext 配置
+- **`fix(agent): isolate credential pool on provider fallback`（`2e18160`）** —— provider fallback 时 credential pool 隔离防 cross-contamination
+- **`fix(security): drop caller-controlled author override in kanban_comment`（`9bbad3c`）** + `e3ebaa1` 回归 —— Kanban impersonation 防护
+- **`fix(security): honor relay-declared sender_type in Google Chat adapter to prevent BOT filter bypass`（`c386400`）** + `8578f89` 回归
+
+### v0.14 增量信息汇总
+
+至 2026-05-27，v0.14 安全 wave 经历四个阶段：
+
+| Wave | 时段 | 主题 |
+|------|------|------|
+| 1 | v0.13 / v0.14 base | 主线 20 P0 闭合 |
+| 2 | 2026-05-23 ~ 24 | webhook fail-closed + Svix + Dashboard WS loopback + 多平台审批授权链 |
+| 3 | 2026-05-25 ~ 26 | 6 处 symlink 拒绝矩阵 + `.env` 0o600 + `_YOLO_MODE_FROZEN` + GHSA-rhgp-j443-p4rf + `hermes security audit` + threat_patterns 库 + `<untrusted_tool_result>` 包裹 |
+| 4 | 本次 2026-05-27 | Dashboard OAuth + security-guidance + 凭据/webhook 加固 |
 
 ## 相关页面
 

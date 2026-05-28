@@ -303,3 +303,45 @@
   - fuzzy-matching-engine.md — "2026-05-26 Patch 工具三连增强" 大节（缩进保留算法 + CRLF 保留 + per-file 失败升级 + 测试增量）
 - README.md / index.md badge & changelog 索引：29 → 30 changelogs，"最后更新" 2026-05-25 → 2026-05-26，跟踪 HEAD 标注 `b62af47` → `556bf7c5c`（badge 用 short hash `556bf7c`）
 - 验证策略: 每条结论都至少一条 `grep -n` / `Read` 命中 `/home/user/hermes-agent` clone；每个 file:line 引用现行 source 实际行号；功能描述对照对应 PR 标题 + commit body + 实际 hunk 内容
+
+
+## [2026-05-27] ingest | 跨日同步 hermes-agent 645 commits（`556bf7c5c` → `963d22c`）
+- 输入: `git clone NousResearch/hermes-agent` @ `963d22c`（`2026-05-27 13:55 -0700`，msg "test(install): harden uv-python-path regression test against future drift"），hermes 远端默认分支由 `master` 改名 `main`
+- 范围: 自 wiki HEAD `e4d2175` = hermes `556bf7c5c` 起 645 个新 commit（312 fix、79 feat、78 chore、42 test、27 docs、19 refactor、11 infographic、10 perf、7 ci、3 security），多个 PR 长期 feature branch 集中合并；版本仍 v0.14.0；验证基线 `/tmp/hermes-agent` clone @ `963d22c`
+- 新增 1 个 changelog 页面：
+  - changelog/2026-05-27-update.md（约 19 章 + 文件矩阵）—— 主题：**Dashboard OAuth 鉴权闸门 Phase 0-7 整体落地**（`hermes_cli/dashboard_auth/` 10 文件 1868 行 + Nous Portal Provider 582 行 + WS 30s 单次性 ticket）、**Honcho AI-native 跨会话用户建模 MemoryProvider**（5 文件 5158 行 + identity-mapping single/multi/hybrid wizard）、**Krea 图像生成 Provider 插件**（548 行，Krea 2 Medium/Large）、**security-guidance 插件**（25 条 dangerous-pattern Apache-2.0 fork #33131）、**TUI Session Orchestrator**（in-TUI 多 session 同屏 635 行）、**API Server 三连**（Session CRUD + GET /v1/skills + /v1/toolsets #33016）、**Windows 原生支持收官 v0.14 beta**（UTF-8 stdio shim / Scheduled Task / install.ps1 加固 / 79+63 skill platforms）、**Docker wave**（Node 22 LTS multi-stage + chown 链 + s6 env 转译）、**Codex Responses-API 14 修复**（drop responses.stream() helper + null/large/encrypted_content recovery）、**xAI 模型退役迁移工具链**（hermes migrate xai + ruamel round-trip）、**xAI Web Search provider 插件**（第 8 个 web provider）、**Telegram 19 修复**（in-place edit + DM topic + heartbeat 原地 + 2GB skip-STT + ignore_root_dm）、**性能 wave**（agent-loop -47% via load_config_readonly + terminal poll -195ms + cold start -19s）、**Bitwarden EU + self-hosted server URL #31378**、**BrowseShSource 第 8 个 skill catalog**（Browserbase 200+ 站点）、**hermes update --branch + post-pull syntax-validate auto-rollback #28669/#26172**、**Nix #messaging / #full 包变体 #33108**
+- 新增 1 个 concept 页面：
+  - concepts/dashboard-auth-oauth-gate.md（约 280 行）—— 完整新架构页：DashboardAuthProvider ABC + Session/LoginStart dataclass + 3 类异常映射、Registry 进程级单例、Middleware 闸门白名单、Cookie 体系（__Host-/__Secure-）、WS 单次性 ticket、Nous Portal Provider 协议要点、Phase 0-7 时间线、fail-closed 与 hardening、loopback vs gated 对比、测试矩阵；引 `hermes_cli/dashboard_auth/{base.py:65,middleware.py:32,routes.py,ws_tickets.py:30,cookies.py,login_page.py,prefix.py,audit.py,registry.py}` + `plugins/dashboard_auth/nous/__init__.py` + `hermes_cli/plugins.py:558`
+- 更新 7 个 concept 页面：
+  - hook-system-architecture.md — 顶部增 "2026-05-27 新增钩子" 表（`register_dashboard_auth_provider:558` + `standalone_sender_fn`），PluginContext 8 个 register_* 全表（image_gen/dashboard_auth/video_gen/web_search/browser/tts/transcription/auxiliary_task）；`register_auxiliary_task` line 由 703 修正到 825
+  - memory-system-architecture.md — 顶部增 "2026-05-27 增量 — Honcho Memory Provider 全 identity-mapping wave" 大块，覆盖 5 个 honcho_* 工具 + 配置 chain + identity-mapping 三 shape + `pinUserPeer ↔ pinPeerName` 别名链 + 6 个 honcho 修复簇 + gateway 集成；frontmatter sources / updated / tags 同步
+  - security-defense-system.md — 末尾追加 "v0.14 增量 — 2026-05-27 Wave 4" 大节，覆盖 Dashboard OAuth + security-guidance + 凭据/Webhook/file-safety 加固簇 + v0.14 增量信息汇总表（Wave 1-4 时段分类）；frontmatter sources 加 dashboard_auth + security-guidance 文件路径
+  - cli-architecture.md — 新增 "v0.14 增量 — 2026-05-27" 大节，覆盖 hermes migrate xai 命令 + hermes update --branch + Dashboard OAuth 配置 surface + TUI Session Orchestrator + Bitwarden EU + Nix 包变体 + API Server 三连 + 性能微调（load_config_readonly）
+  - messaging-gateway-architecture.md — 新增 "2026-05-27 wave" 大节：Telegram 19 修复表 + API Server CRUD + Signal/Google Chat/Slack 小修 + Voice-mode 容器化音频桥 + SQLite NFS fallback；frontmatter sources 加 api_server.py
+  - auxiliary-client-architecture.md — 新增 "v0.14 增量 — Codex Responses API 修复簇（2026-05-27 wave）" 大节：14 个 Codex 修复表 + Provider fallback 凭据池隔离 + switch_model 失败 rollback；`register_auxiliary_task` line 由 703 修正到 825
+  - web-tools-architecture.md — provider 表 7 → 8 加 xAI Web Search 行 + Firecrawl integration tag 注释
+  - skills-system-architecture.md — 新增 "BrowseShSource — 第 8 个 catalog 源（2026-05-27 NEW）" 大节 + "Skills 修复簇（2026-05-27 NEW）" 表（atomic lock / preserve packages / backfill provenance / nested install paths 等 7 条）+ "7 个 Linux/macOS-only Skills 在 Windows 上 gate" 节
+- 源码已验证存在（关键样本）：
+  - `hermes_cli/dashboard_auth/base.py:65 DashboardAuthProvider` + `:9 Session` + `:125 assert_protocol_compliance` （共 158 行）
+  - `hermes_cli/dashboard_auth/middleware.py:32 _GATE_PUBLIC_PREFIXES`（共 207 行）
+  - `hermes_cli/dashboard_auth/ws_tickets.py:27 TTL_SECONDS=30` + `:32 mint_ticket` + `:55 consume_ticket`（共 87 行）
+  - `hermes_cli/dashboard_auth/registry.py:23 register_provider` + `:49 list_providers`（共 58 行）
+  - `plugins/dashboard_auth/nous/__init__.py`（582 行，RS256 + JWKS 5min cache + agent_dashboard:access scope + agent_instance_id claim 校验）
+  - `hermes_cli/plugins.py:558 register_dashboard_auth_provider`（明 hook + ABC 类型校验 + try/except 降级为 warning 不让 host 崩）
+  - `plugins/memory/honcho/__init__.py:191 HonchoMemoryProvider` + `:33-188` 5 个工具 schema（1327 行）
+  - `plugins/memory/honcho/client.py:495-505 pinUserPeer/pinPeerName` 4-key 别名链解析（840 行）
+  - `plugins/memory/honcho/cli.py:431 cmd_setup` + `:512-600` deployment-shape 三 shape wizard（1650 行）
+  - `gateway/run.py:1791,15109-15121` honcho session managers + doctor 暴露
+  - `plugins/image_gen/krea/__init__.py:50 _MODELS` + `:161 KreaImageGenProvider` + `:546-548 register(ctx)`（548 行；Krea 2 Medium/Large）
+  - `plugins/security-guidance/patterns.py:53 SECURITY_PATTERNS`（25 条；368 行）
+  - `plugins/security-guidance/__init__.py`（259 行；transform_tool_result + pre_tool_call hook）
+  - `ui-tui/src/components/activeSessionSwitcher.tsx`（635 行）
+  - `tui_gateway/server.py` +221 行（TUI session orchestrator 后端 RPC）
+  - `gateway/platforms/api_server.py` +476 行（session controls + /v1/skills + /v1/toolsets）
+  - `hermes_cli/config.py:4579 load_config_readonly` + `hermes_cli/timeouts.py:22,51`（agent-loop -47% 性能修复）
+  - `hermes_cli/xai_retirement.py`（253 行，纯逻辑） + `hermes_cli/migrate.py:cmd_migrate_xai` + `hermes_cli/main.py:11265-11297 migrate_xai` 子命令注册
+  - `plugins/web/xai/plugin.yaml` + `provider.py`（第 8 个 web provider）
+  - `tools/skills_hub.py:2429 BrowseShSource(SkillSource)`（catalog https://browse.sh/api/skills + skillMdUrl CDN）
+- 关键 commit 用 `git show <sha> --stat` 抽样：`8773bbf` / `2dc6d03` / `c32b17f` / `848baeb` / `b69fce9` / `2fc4615` / `848baeb` / `c310419` / `4272977` / `b3dc539`（dashboard auth Phase 0-7）；`2e3c662` / `0bac880` / `1a8e670` / `c03960d` / `eccbbe4`（honcho 15 子修复）；`9919caf` (Krea) / `249534e` (security-guidance) / `0a83247` (TUI orchestrator) / `f7527b0` (api_server session) / `25f43d3` (api_server /v1/skills #33016) / `cb38ce2` + `b6ca56f` + `e8955f2` (Codex 修复); `0ec052c` (cold start -19s) / `544c31b` (47% agent-loop perf) / `6bd4311` (terminal poll -195ms); `12842d3` + `9ff98da` + `6f3a020` (xAI migrate); `a0c0312` (xAI Web Search); `57145ca` (BrowseShSource); `bc3f1f4` (Bitwarden EU)
+- README.md / index.md badge & changelog 索引：30 → 31 changelogs，"最后更新" 2026-05-26 → 2026-05-27，跟踪 HEAD 标注 `556bf7c5c` → `963d22c`（badge short hash `963d22c`），跟踪远端分支由 `master` 改为 `main`，**concept 页面 45 → 46**（新增 [[dashboard-auth-oauth-gate]]）
+- 验证策略: 每条结论都至少一条 `grep -n` / `Read` 命中 `/tmp/hermes-agent` clone @ `963d22c`；每个 file:line 引用现行 source 实际行号；功能描述对照对应 PR 标题 + commit body + 实际 hunk 内容；645 commit 量级下重点抓 19 个 feat + 3 security + 11 perf 上游 PR 验证

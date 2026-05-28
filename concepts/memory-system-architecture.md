@@ -1,10 +1,10 @@
 ---
 title: Memory System Architecture
 created: 2026-04-07
-updated: 2026-05-26
+updated: 2026-05-27
 type: concept
-tags: [memory, architecture, module, promptware-defense]
-sources: [tools/memory_tool.py, tools/threat_patterns.py, agent/memory_manager.py, agent/memory_provider.py, agent/builtin_memory_provider.py, run_agent.py, agent/prompt_builder.py, plugins/memory/__init__.py, gateway/platforms/api_server.py]
+tags: [memory, architecture, module, promptware-defense, honcho]
+sources: [tools/memory_tool.py, tools/threat_patterns.py, agent/memory_manager.py, agent/memory_provider.py, agent/builtin_memory_provider.py, run_agent.py, agent/prompt_builder.py, plugins/memory/__init__.py, plugins/memory/honcho/__init__.py, plugins/memory/honcho/client.py, plugins/memory/honcho/session.py, plugins/memory/honcho/cli.py, gateway/platforms/api_server.py]
 ---
 
 > **v2026.5.7 增量**：
@@ -12,6 +12,20 @@ sources: [tools/memory_tool.py, tools/threat_patterns.py, agent/memory_manager.p
 > - **API Server `X-Hermes-Session-Key` header**（#20199）—— 给 memory provider 一个稳定 session 标识，让长期记忆按 session 隔离。源码 `gateway/platforms/api_server.py:5` 注释。
 > - **Hindsight provider** 增加 `update_mode='append'` probe API，跨进程 dedup（@nicoloboschi, #20222）。
 > - `on_session_switch` 钩子已落地（v2026.4.23 引入）：源码确认 `cli.py:5339, 5447, 5583` + `run_agent.py:9540` 调用 `_memory_manager.on_session_switch(...)` —— 在 `/resume` / `/branch` / `/reset` / `/new` / 上下文压缩时通知 provider 刷新缓存。
+>
+> **2026-05-27 增量 — Honcho Memory Provider 全 identity-mapping wave**：
+>
+> Honcho 是首个具备 *AI-native 跨会话用户建模* 的外部 MemoryProvider：dialectic Q&A + semantic search + peer cards + persistent conclusions。15 个 honcho 子 commit 同日合入（commits `2e3c662` → `eccbbe4`），关键能力：
+>
+> - **5 个 honcho_* 工具**：`honcho_profile` / `honcho_search` / `honcho_reasoning` / `honcho_context` / `honcho_conclude`（`plugins/memory/honcho/__init__.py:33-188`）
+> - **配置 chain**：`$HERMES_HOME/honcho.json`（profile-scoped）> `~/.honcho/config.json`（legacy 全局）> 环境变量
+> - **Identity-mapping 三 shape**：`single` / `multi` / `hybrid` —— 控制 Telegram UID / Discord snowflake 等 runtime ID 如何映射到 Honcho peer。CLI wizard 在 `plugins/memory/honcho/cli.py:512-600`
+> - **`pinUserPeer` ↔ `pinPeerName`** 别名链（`refactor(honcho): accept pinUserPeer as backwards-compatible alias`） + 4-key 解析优先级 `host_block.pinUserPeer > host_block.pinPeerName > root.pinUserPeer > root.pinPeerName`（`client.py:495-505`）
+> - **修复簇**：peer-card read/write 路径对齐、user_id 进入 agent cache 签名（防 shared-thread peer 污染）、identity-mapping 继承到 cloned profile、pinPeerName transition 漏洞补全、user context peer 视角对齐
+> - **`hermes honcho setup`** wizard：单步选 deployment-shape，单 → multi 转换会预警 peer pool orphan 并引导 hybrid
+> - **gateway 集成**：`gateway/run.py:15109-15121` 暴露 honcho 配置到 doctor 视图（`peer_name` / `ai_peer` / `pin_peer_name` / `runtime_peer_prefix`）
+>
+> 详细见 [[2026-05-27-update#2-honcho-memory-provider]] 与 plugin README。
 
 # 记忆系统架构
 

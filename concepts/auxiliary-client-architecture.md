@@ -312,7 +312,7 @@ export AUXILIARY_WEB_EXTRACT_API_KEY=sk-xxx
 
 ### Plugin 注册新 auxiliary task slot（2026-05-24，`e752c94`）
 
-`hermes_cli/plugins.py:703 PluginContext.register_auxiliary_task(key, ...)` 让插件声明自有 auxiliary task slot 而不动核心。详见 [[hook-system-architecture]] "v2026.5.x 插件增强 → `ctx.register_auxiliary_task()`"。
+`hermes_cli/plugins.py:825 PluginContext.register_auxiliary_task(key, ...)` 让插件声明自有 auxiliary task slot 而不动核心。详见 [[hook-system-architecture]] "v2026.5.x 插件增强 → `ctx.register_auxiliary_task()`"。
 
 gateway 启动时：
 
@@ -340,6 +340,43 @@ from agent.auxiliary_client import get_available_vision_backends
 print(get_available_vision_backends())
 # 输出: ['openrouter', 'nous', 'anthropic'] (取决于配置)
 ```
+
+## v0.14 增量 — Codex Responses API 修复簇（2026-05-27 wave）
+
+> Codex 是 OpenAI Responses API（不是 Chat Completions）的内部 SDK 接入。从单日合入的 11 个 codex 子修复看，本 wave 把 Codex adapter 从「容易失败」转为「失败时进入 graceful 路径」。
+
+主线进展：从 SDK `responses.stream()` helper 切换到直接 consume events，让 partial / null output / large prefill / encrypted_content 三类失效都能在 adapter 层进入 graceful 路径，不再上升为整个 turn 的失败。
+
+| Commit | 修复 |
+|--------|------|
+| `cb38ce2` | **refactor(codex): drop SDK `responses.stream()` helper; consume events directly (#33042)** — 转直接事件消费 |
+| `e8955f2` | **fix(codex): drop dead model slugs that HTTP 400 on ChatGPT Pro (#33424)** — 模型 catalog 清理 |
+| `fc47b72` | **fix(codex): omit `tools` key from Codex Responses kwargs when no tools registered** — 空 tools key 触发 API 拒绝 |
+| `283bb81` | **fix(agent): tolerate large codex stream prefill** |
+| `486d632` | **fix(auxiliary): coerce `None final.output` to empty list in Codex aux adapter** |
+| `69dfcdc` | **fix(auth): codex chat path falls back to `credential_pool` when singleton is empty** |
+| `f1422ff` | **fix(gateway): classify Codex 429 quota as rate-limit, not missing credentials** — 错误分类修正 |
+| `2bbd534` | **fix(cli): sync `credential_pool` on Codex re-auth** |
+| `9c69204` | **fix(codex_responses_adapter): drop foreign-issuer reasoning on replay** |
+| `b1a46b3` | **fix(codex): drop transient `rs_tmp` reasoning replay state** |
+| `4243b6d` | **fix(codex): update silent-hang workaround hint** |
+| `b6ca56f` | **fix(codex-responses): gracefully recover from `invalid_encrypted_content` (salvage #10144, #33035)** |
+| `43a3f11` | **fix(agent): recover Codex streams with null output** |
+| `bba5097` | **fix: parse Codex image generation SSE directly** |
+
+### Provider fallback 凭据池隔离（2026-05-27）
+
+- `2e18160` **fix(agent): isolate credential pool on provider fallback** — fallback 触发时不再 leak 凭据池给非预期 provider
+- `414a5bc` **fix(auth): fall back to global auth.json in `_load_provider_state`**
+- `c6a992e` **fix(security): derive `<VENDOR>_API_KEY` from host as final credential fallback**
+
+### switch_model 失败 rollback（2026-05-27）
+
+- `f0de3cd` **fix(agent): roll back `switch_model()` state when client rebuild fails (#33228)** — 模型切换时 client rebuild 异常不再让 agent 卡在半切换状态
+
+### Auxiliary 统一 main-model fallback（2026-05-25 wave，已在上次同步）
+
+`auxiliary_client.py` 在 vision / web_extract / compression 各 task 上都接 main-model fallback —— 详见 [[2026-05-25-update]]。
 
 ## 与其他系统的关系
 
