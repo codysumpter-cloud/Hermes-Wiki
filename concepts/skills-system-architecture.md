@@ -1,10 +1,10 @@
 ---
 title: Skills System Architecture
 created: 2026-04-07
-updated: 2026-05-26
+updated: 2026-06-01
 type: concept
-tags: [skill, architecture, module, prompt-builder, curator, bundles, skills-hub-health]
-sources: [tools/skills_tool.py, tools/skill_manager_tool.py, tools/skills_hub.py, tools/skills_guard.py, tools/skill_usage.py, tools/skill_provenance.py, run_agent.py, agent/prompt_builder.py, agent/curator.py, agent/curator_backup.py, agent/skill_bundles.py, hermes_cli/curator.py, hermes_cli/plugins.py, agent/skill_utils.py, scripts/build_skills_index.py, .github/workflows/skills-index-freshness.yml]
+tags: [skill, architecture, module, prompt-builder, curator, bundles, skills-hub-health, blank-slate-skills, curator-inactivity-prune, telemetry-decoupled]
+sources: [tools/skills_tool.py, tools/skill_manager_tool.py, tools/skills_hub.py, tools/skills_guard.py, tools/skill_usage.py, tools/skill_provenance.py, run_agent.py, agent/prompt_builder.py, agent/curator.py, agent/curator_backup.py, agent/skill_bundles.py, hermes_cli/curator.py, hermes_cli/skills_hub.py, hermes_cli/plugins.py, agent/skill_utils.py, scripts/build_skills_index.py, scripts/install.sh, tools/skills_sync.py, .github/workflows/skills-index-freshness.yml]
 ---
 
 > **v2026.5.7 增量**：
@@ -677,6 +677,74 @@ raise ValueError(
 
 `b18b17f`「feat(skills): gate 7 Linux/macOS-only skills from Windows via platforms frontmatter」+ `98db898` / `db22efb`（79 个内置 + 63 个 optional skill declare 平台）—— Windows 用户不再误装跑不通的 skill。
 
+## 2026-06-01 增量（hermes `b9646276f`）
+
+### Blank-slate Skills —— 完全裸装路径（#36228，`2ed96372a`）
+
+为不想被默认 bundled skill 影响的用户提供"裸装"路径：
+
+**install-time opt-out**：
+- `scripts/install.sh +34/-3` 新增 `--no-skills` flag。
+- `hermes_cli/main.py +37` `hermes profile create --no-skills` 写 marker（用于命名 profile）。
+- 落盘 marker **文件名是 `.no-bundled-skills`**（commit body 修正了文档里写错的 `.no-skills`）。
+
+**runtime opt-out / opt-in**（`hermes_cli/skills_hub.py +108`）：
+
+```
+1075 def do_opt_out(remove: bool = False, ...)
+1087     set_bundled_skills_opt_out,
+1094     res = set_bundled_skills_opt_out(True)
+1145 def do_opt_in(sync: bool = False, ...)
+1153     from tools.skills_sync import set_bundled_skills_opt_out, sync_skills
+1157     res = set_bundled_skills_opt_out(False)
+1550 elif action == "opt-out":
+1553 elif action == "opt-in":
+1580 _console.print("Usage: hermes skills [browse|search|install|inspect|list|check|update|audit|uninstall|reset|opt-out|opt-in|publish|snapshot|tap]\n")
+```
+
+**sync 层**（`tools/skills_sync.py +148`）：
+
+- `:43-44` 注释 _"Marker file written by `hermes profile create --no-skills` (named profiles) and by the installer's `--no-skills` flag (the default ~/.hermes profile)."_
+- `:464` 空结果 shape `skipped_opt_out: True` 让 caller 报"opted out"
+- `:753 def set_bundled_skills_opt_out(enabled: bool) -> dict` —— on-disk-state 入口，docstring：_"This is the on-disk-state half of `hermes skills opt-out` / `opt-in`"_
+
+**关键不变量**：**Hub 安装的 skill 永不受 opt-out 影响**（与下面 inactivity 修剪行为一致）。
+
+### Curator —— inactivity 修剪 built-in skills（#36701，`70e1571d8`）
+
+`agent/curator.py +53` + `hermes_cli/config.py +11`：之前 curator 只管 archive/prune"agent-created skills"，built-in/optional skill 即使长期未用也不被修剪。现在新增 curation 标志（**默认 off**）：
+
+- 累积 `unused_since` 超过阈值的 built-in/optional skill 软 archive（停止 token 成本）。
+- 阈值是 **days-since-last-use，forward from enablement time** —— 开关一打开**不会**对历史从未用过的 skill mass-prune。
+- **Hub-installed skills 永不被修剪**（无论标志状态）。
+- restoring a built-in 清其 suppression。
+
+### Skill Usage Telemetry 解耦 curation-eligibility（#36701 同 commit）
+
+`tools/skill_usage.py +326`。之前 telemetry（view / use / patch counts）被错误地 gate 在 curation-eligibility 后：built-in 只有在 prunable 时被跟踪，hub 永不被跟踪。修复：
+
+- **Every skill accrues usage counts regardless of provenance** —— observability ≠ lifecycle。
+- Lifecycle mutators（`set_state` / `set_pinned` / `mark_agent_created`）仍 curation-gated。
+- 新 API：
+  - `usage_report()` —— 暴露所有 skill 的使用计数。
+  - `provenance()` —— 暴露 agent / bundled / hub 标签。
+
+配套：`agent/curator_backup.py +2`、`tools/skills_sync.py +40`、`tests/agent/test_curator.py +125`、`tests/tools/test_skill_usage.py +116`。
+
+### Skills Guard —— `.skillignore` / `.clawhubignore` 蜜罐（`ba6ffd4ff`）
+
+`tools/skills_guard.py +137`，commit body 引：
+
+> _"scan_skill() now honors a skill-provided `.skillignore` / `.clawhubignore` (gitignore-style) so dev/docs artifacts shipped in a skill root are excluded from both structural checks and pattern scanning. SKILL.md is never ignorable."_
+
+- gitignore 风格规则排除 dev / docs / 临时文件。
+- **`SKILL.md` 永不可被忽略**（防恶意 skill 把 manifest 藏进 ignore）。
+- 之前 skills-guard 会把一些良性 markdown / 配置当攻击 pattern 报警，现在 80 测试通过（64 旧 + 16 新）。
+
+[[2026-06-01-update#4-curator-built-in-修剪--全-skill-用量遥测]] / [[2026-06-01-update#5-skills-空白起步]] / [[2026-06-01-update#11-skills-guard-良性内容]]。
+
+---
+
 ## 相关页面
 
 - [[prompt-builder-architecture]] — 技能索引构建与条件激活
@@ -705,3 +773,9 @@ raise ValueError(
 - `optional-skills/autonomous-ai-agents/openhands/SKILL.md` — **NEW 2026-05-26** OpenHands CLI delegation skill
 - `optional-skills/software-development/code-wiki/SKILL.md` — **NEW 2026-05-26** 代码 wiki 生成 skill
 - `tools/skills_hub.py:2429 BrowseShSource` — **NEW 2026-05-27** browse.sh 第 8 个 catalog 源（Browserbase 200+ 站点专用浏览器自动化 SKILL.md）
+- `scripts/install.sh` — **NEW 2026-06-01** `--no-skills` flag（blank-slate 安装）
+- `hermes_cli/skills_hub.py:1075,1145,1550-1553` — **NEW 2026-06-01** `do_opt_out`/`do_opt_in` + `opt-out`/`opt-in` action 路由
+- `tools/skills_sync.py:43,464,753` — **NEW 2026-06-01** `.no-bundled-skills` marker + `set_bundled_skills_opt_out(enabled)` on-disk-state 入口
+- `tools/skill_usage.py:326` — **NEW 2026-06-01** 全 skill telemetry + `usage_report()` + `provenance()`（解耦 curation-eligibility，hub 也开始被计数）
+- `agent/curator.py:53` — **NEW 2026-06-01** inactivity 修剪 built-in（默认 off + days-since-last-use forward from enablement + hub 永不修剪）
+- `tools/skills_guard.py +137` — **NEW 2026-06-01** `.skillignore`/`.clawhubignore` gitignore-style 蜜罐（`SKILL.md` 永不可忽略）

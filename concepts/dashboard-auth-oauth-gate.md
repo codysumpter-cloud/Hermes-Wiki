@@ -1,7 +1,7 @@
 ---
 title: Dashboard OAuth 鉴权闸门（v0.14 增量）
 created: 2026-05-27
-updated: 2026-05-27
+updated: 2026-06-01
 type: concept
 tags: [architecture, security, dashboard-auth, oauth, plugins, extensibility]
 sources:
@@ -323,6 +323,30 @@ def register_dashboard_auth_provider(self, provider) -> None:
 - `stub auth provider for E2E gate testing`（`628a52f`）
 - `strip HERMES_DASHBOARD_OAUTH_* env vars in hermetic fixture`（`c598076`）—— 防止 host 环境污染测试
 
+## 2026-06-01 增量 — Dashboard 全管理面板复用既有闸门（#36704，`b571ec298`）
+
+`hermes_cli/web_server.py +786`（6300→7079 行）新增 17 个管理端点，全部经现有 middleware 走 OAuth 闸门 —— **无新增暴露面**：
+
+| 模块 | 端点 | 行号 |
+|------|------|------|
+| MCP | `GET/POST /api/mcp/servers` + `DELETE/POST /api/mcp/servers/{name}` + `.../test` | 4041 / 4053 / 4089 / 4098 |
+| Pairing | `GET /api/pairing` + `approve` / `revoke` / `clear-pending` | 4147 / 4156 / 4178 / 4192 |
+| Webhooks | `GET/POST /api/webhooks` + `DELETE /api/webhooks/{name}` | 4237 / 4253 / 4305 |
+| Gateway | `POST /api/gateway/{start,stop,restart}` | 4328 / 4338 / 860 |
+| Credentials | `GET/POST /api/credentials/pool` + `DELETE .../{provider}/{index}` | 4385 / 4412 / 4446 |
+| Memory | `GET /api/memory` + `PUT /api/memory/provider` + `POST /api/memory/reset` | 4484 / 4519 / 4543 |
+| Ops | `doctor` / `security-audit` / `backup` / `import` / `hooks` / `checkpoints` / `checkpoints/prune` | 4580 / 4590 / 4605 / 4622 / 4637 / 4673 / 4705 |
+
+前端 4 个新页面 `web/src/pages/{McpPage,PairingPage,WebhooksPage,SystemPage}.tsx`（446 + 276 + 447 + 663 行）+ `web/src/App.tsx:78-81 import` + `:131-134` 路由 + `web/src/lib/api.ts +257` fetch wrappers。228 行测试 `tests/hermes_cli/test_dashboard_admin_endpoints.py`。
+
+### Dashboard OAuth `/api/*` 不在 next= round trip（`e1eba6f8c`，#36244）
+
+`fix(dashboard-auth): drop /api/* paths from OAuth next= round trip` —— 之前 OAuth 完成跳回 `next=` 参数，会包含 `/api/...` 路径（无 UI 重定向意义）。修复后从 next= 排除 `/api/*` 路径。
+
+详见 [[2026-06-01-update#2-dashboard-全管理面板]]。
+
+---
+
 ## 相关页面
 
 - [[security-defense-system]] — 多层防御整体框架，dashboard OAuth 是 v0.14-late 新增的 layer
@@ -330,3 +354,4 @@ def register_dashboard_auth_provider(self, provider) -> None:
 - [[provider-plugin-system]] — 同样的 ABC + Registry + Plugin discovery 模式
 - [[cli-architecture]] — `hermes dashboard` 子命令是闸门的入口
 - [[2026-05-27-update]] — 落地 changelog
+- [[2026-06-01-update]] — Dashboard 全管理面板（17 个新端点复用闸门）

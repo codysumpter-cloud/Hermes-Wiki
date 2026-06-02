@@ -1,10 +1,10 @@
 ---
 title: CLI 架构与终端交互设计
 created: 2026-04-07
-updated: 2026-05-31
+updated: 2026-06-01
 type: concept
-tags: [architecture, cli, terminal, ux, tui, ink, setup, prompt-size, partial-compress]
-sources: [cli.py, hermes_cli/, ui-tui/, tui_gateway/, hermes_cli/partial_compress.py, hermes_cli/prompt_size.py, hermes_cli/mcp_startup.py]
+tags: [architecture, cli, terminal, ux, tui, ink, setup, prompt-size, partial-compress, undo-rewind, desktop-cli]
+sources: [cli.py, hermes_cli/, ui-tui/, tui_gateway/, hermes_cli/partial_compress.py, hermes_cli/prompt_size.py, hermes_cli/mcp_startup.py, apps/desktop/, hermes_state.py]
 ---
 
 > **v2026.4.30 ~ v2026.5.7 增量**：
@@ -571,6 +571,77 @@ setup 的 provider→model 子菜单及 3 个同类 picker 从 `simple_term_menu
 
 ---
 
+## 2026-06-01 增量（hermes `b9646276f`）
+
+### `hermes desktop` —— 原生桌面应用入口（#20059, `51c68d4ab`）
+
+**新增第三种前端**：Electron + React 原生桌面应用，与经典 CLI、Ink TUI 并列。`hermes_cli/main.py:14716-14759 subparsers.add_parser("desktop", aliases=["gui"], ...)`：
+
+```python
+gui_parser = subparsers.add_parser(
+    "desktop",
+    aliases=["gui"],                            # gui 是一版兼容别名
+    help="Build and launch the native desktop app",
+    description=(
+        "Launch the Hermes Electron desktop app. By default this installs "
+        "workspace Node dependencies, builds the current OS's unpacked "
+        "Electron app, then launches that packaged artifact."
+    ),
+)
+gui_parser.add_argument("--skip-build", ...)        # 跳 npm install/package，直接启动
+gui_parser.add_argument("--source", ...)            # electron . 模式（apps/desktop/dist）
+gui_parser.add_argument("--build-only", ...)        # installer --update 调
+gui_parser.add_argument("--fake-boot", ...)         # 确定性启动延迟（测启动 UI）
+gui_parser.add_argument("--ignore-existing", ...)   # 忽略 PATH 上既有 hermes CLI
+```
+
+注释（同文件 line 14718-14722）明确：
+
+> _"The canonical name is 'desktop'; 'gui' is kept as a deprecated alias for one release. The Hermes-Setup.exe success screen tells users to run `hermes desktop` from a terminal, so the canonical name needs to be the one that appears in --help (argparse promotes the primary name; aliases stay hidden)."_
+
+**远程后端模式**（WSL2 跨界）：`HERMES_DESKTOP_REMOTE_URL` + `HERMES_DESKTOP_REMOTE_TOKEN` 环境变量短路本地 Python 子进程 spawn，让 Electron renderer 连到已运行的 `hermes dashboard` server。`waitForHermes()` 复用做 liveness probe（`/api/status`）。
+
+详见 [[2026-06-01-update#1-hermes-desktop-app]]。后续可考虑独立 [[desktop-app-architecture]] 概念页。
+
+### `/undo [N]` —— N 回合软删 + audit（#21910 + #36699）
+
+之前 `/undo` 是单回合硬截。现在升级为：**软删（active=0）+ N 回合参数 + prefill 可编辑文本 + 跨 CLI/TUI/Gateway 一致**。
+
+CLI 入口 `cli.py:7106 undo_last(n: int = 1, prefill: bool = True)`（commit `3f7d1c801` 实证）：
+
+```python
+# cli.py:7106-7111
+def undo_last(self, n: int = 1, prefill: bool = True):
+    """undo_last —— in-memory truncate + SQLite soft-delete + agent surgery
+    (system-prompt invalidate, flush-index reset) + memory notify + editable
+    buffer prefill. ``n`` defaults to 1 (the last exchange); ``/undo 3``
+    backs up the last 3 user turns. ``prefill=False`` is used by checkpoint-
+    rollback callers, etc.)
+    """
+```
+
+slash 解析（`cli.py:8721-8728`）：
+
+```python
+# Parse optional turn count: "/undo" → 1, "/undo 3" → 3.
+try:
+    n = int(_undo_parts[1])
+except ValueError:
+    print(f"(._.) Invalid count {_undo_parts[1]!r} — use /undo or /undo N.")
+```
+
+底层依赖 `hermes_state.py:2426 rewind_to_message` 软删 primitive + `:2513 restore_rewound` audit-only undo-of-undo。`hermes_cli/commands.py` 中 `/undo` 增 `args_hint=[N]`。
+
+TUI 端走 `tui_gateway/server.py` 的 command.dispatch undo 分支（`243e836dc`）：picker 选 user turn 后把 backup 的 message text 作为 prefill payload 推回 ui-tui。
+
+详见 [[2026-06-01-update#3-undo-n-三层落地]]。
+
+### `/clear`/`/new`/`/reset`/`/undo` 共用销毁性确认（v0.13.0+ 持续）
+
+`cli.py:10557 / :10628 / :12944` 实证：4 个销毁性 slash 命令共享一套二次确认 + "Future ... will run without confirmation" 静默承诺。
+
+---
+
 ## 相关文件
 
 - `cli.py` — 经典 CLI 主类（660KB；大单体文件）
@@ -584,6 +655,11 @@ setup 的 provider→model 子菜单及 3 个同类 picker 从 `simple_term_menu
 - `hermes_cli/partial_compress.py` — `/compress here [N]` 模块（235 行，2026-05-29+）
 - `hermes_cli/prompt_size.py` — `hermes prompt-size` 诊断（153 行，2026-05-30+）
 - `hermes_cli/mcp_startup.py` — MCP discovery 非阻塞 background task（59 行，2026-05-30+）
+- `hermes_cli/main.py:14716-14759` — `hermes desktop` 子命令注册（2026-05-31+）
+- `apps/desktop/` — Electron + React 桌面应用（2026-05-31+，442 文件，第三种前端）
+- `apps/bootstrap-installer/` — Tauri Windows 安装器（bundle Python+Git 免管理员）
+- `hermes_state.py:288,2426,2513,2537` — `messages.active` 软删 + rewind primitives（2026-06-01+）
+- `cli.py:7106 undo_last(n, prefill)` — `/undo [N]` 实装（2026-06-01+）
 - `agent/portal_tags.py` — Portal 请求标签集中点（`product=hermes-agent` + `client=hermes-client-v<ver>`）
 - `hermes_cli/dump.py` — `hermes dump` 环境摘要（纯文本，用于调试/提 issue）
 - `agent/display.py` — 显示系统

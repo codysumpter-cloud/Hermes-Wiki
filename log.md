@@ -5,6 +5,42 @@
 > Actions: ingest, update, query, lint, create, archive, delete
 > 当此文件超过 500 条时，轮换：重命名为 log-YYYY.md，重新开始。
 
+## [2026-06-01] sync | hermes-agent eb3cf9750 → b9646276f（58 commits，Desktop App + Dashboard Admin Panel + /undo [N] 三大特性合入）
+- 同步范围：hermes-agent/main `eb3cf9750`（2026-05-31 12:13 -0700）→ `b9646276f`（2026-06-01 09:57 -0700），**58 个 commit**，约 22 小时窗口
+- 验证基线：`/tmp/hermes-agent` 全历史 clone（`git fetch --unshallow origin main`）@ `b9646276f`，每条结论至少一条 `grep -n` / `Read` / `git show <sha> --stat` 命中
+- 版本：仍 v0.15.1（`pyproject.toml:7 version = "0.15.1"` 不变，**无新发布 tag**）；但合入两个延期已久的超大 PR
+- commit 类型分布：36 fix / 16 feat / 4 chore / 1 revert / 1 merge（27% feat，含两个超大集成与 7 个独立 feature）
+- 新增文件：`changelog/2026-06-01-update.md`（550+ 行，18 章节）
+- 更新文件：
+  - `README.md` — 版本徽章 `v0.15.1 (eb3cf975) → v0.15.1 (b9646276)`、Changelogs 33 → 34、统计信息块跟踪 HEAD 与最后更新日期同步 2026-06-01、新增 changelog 列表条目（三大特性 + 7 独立 feat + 安全 + Docker 等综合摘要）
+  - `index.md` — 顶部 tracking 字段（HEAD `b9646276f` / Total pages 33 → 34 changelogs / Last updated 2026-06-01）、changelog 列表新增 2026-06-01 条目
+  - `log.md` — 本条记录
+- 核心结论（均经源码验证，每个 `file:line` 引用现行 source 实际行号）：
+  - **Hermes Desktop App** (#20059, `51c68d4ab`)：442 文件 +114,155 / -3,124；目录结构 `apps/desktop/{electron,src,scripts,assets,public}` + `apps/bootstrap-installer/` Tauri Windows 安装器 + `apps/shared/` workspace 共享；CLI 入口 `hermes_cli/main.py:14716-14759 subparsers.add_parser("desktop", aliases=["gui"], ...)` 含 `--skip-build`/`--source`/`--build-only`/`--fake-boot`/`--ignore-existing` 5 flag；远程后端模式 `HERMES_DESKTOP_REMOTE_URL` + `HERMES_DESKTOP_REMOTE_TOKEN` 短路本地 Python spawn（WSL2/Windows GUI 跨界）
+  - **Dashboard 全管理面板** (#36704, `b571ec298`)：9 文件 +3,189 / -1；4 新页面 `web/src/pages/{McpPage,PairingPage,WebhooksPage,SystemPage}.tsx`（446+276+447+663 行）；`web/src/App.tsx:78-81,131-134` 路由；`hermes_cli/web_server.py +786`（6300→7079 行）新增 17 个端点（MCP 4 + Pairing 4 + Webhooks 3 + Gateway 3 + Credentials 3 + Memory 3 + Ops 6）；228 行 `test_dashboard_admin_endpoints.py`
+  - **`/undo [N]` 三层落地** (#21910 SaguaroDev + #36699 Teknium)：5 commit
+    - State (`3e59be0c4`)：`hermes_state.py:288 active INTEGER NOT NULL DEFAULT 1` + `:315-316` deferred index + `:2426 rewind_to_message` 软删 + `:2513 restore_rewound` undo-of-undo + `:2537 list_recent_user_messages` + read API `:2001 include_inactive=False` opt-in audit + `:863-870` v12 backfill
+    - Memory hook (`31cfa08c6` + `e1951ce70`)：`agent/memory_provider.py:175 on_session_switch(*, rewound=False, ...)` 区分用户切换 vs undo 隐式回退；caller 没传时不转发
+    - TUI (`243e836dc`)：`tui_gateway/server.py +51` command.dispatch undo 分支
+    - CLI (`3f7d1c801`)：`cli.py:7106 undo_last(n, prefill)` in-memory truncate + soft-delete + agent surgery + memory notify + editable buffer prefill；`:8721-8728` slash 解析
+    - Gateway (`0622a70eb`)：`gateway/run.py:8022` 解析 N + `:11630+ _handle_undo_command` echo backed-up text（messaging 无 composer）；`gateway/session.py SessionStore.rewind_session`；16 个 `locales/*.yaml` 同步 `undo.removed{turns}` + `undo.invalid_count`
+  - **Curator inactivity 修剪 + 全 skill 用量遥测** (#36701, `70e1571d8`)：`agent/curator.py +53` 默认 off + days-since-last-use **forward from enablement**（避免开关一打开就 mass-prune）+ hub 安装永不修剪；`tools/skill_usage.py +326` telemetry 解耦 curation-eligibility + 新 `usage_report()` + `provenance()`
+  - **Blank-slate skills** (#36228, `2ed96372a`)：`scripts/install.sh --no-skills` + `hermes profile create --no-skills` + 运行时 `hermes skills opt-out`/`opt-in` + marker `.no-bundled-skills`；`hermes_cli/skills_hub.py:1075/1145/1550-1553`；`tools/skills_sync.py:43,464,753 set_bundled_skills_opt_out()`
+  - **Setup 行内解释** (#36227, `9074a154c`)：`hermes_cli/setup.py +8/-4` "Quick Setup (Nous Portal) — free OAuth login, no API keys" vs "Full setup — BYO keys"
+  - **Free tool pool entitlement** (#36153, `e1c7a9aa7`)：`hermes_cli/nous_account.py:17,64,111,152` 与 Portal `tool-pool-eligibility.ts` byte-for-byte 对齐 + decoupled from paid/billing；`nous_subscription.py:889,903` per-tool checklist；`tools_config.py +40`
+  - **MiniMax-M3 1M context** (#36214, `e3b3d4d75`)：`agent/model_metadata.py DEFAULT_CONTEXT_LENGTHS['minimax-m3']=1_000_000`（longest-key-first，M2.x 仍 204,800）；`a8526a415` openrouter+nous catalogs 默认指 m3
+  - **Model picker group-layer description**：`47d2d0589`/`84d82453a`/`c9a28dfb0` 3 commit
+  - **安全：Agent 写 `~/.hermes/config.yaml` 双闸门**
+    - 工具层 (`8f2931e3e`)：`tools/file_tools.py:256 _hermes_config_resolved` + `:287` 错误提示指 `hermes config` CLI
+    - 终端层 (`4e9d886d9`)：`tools/approval.py:131` 注释 "~/.hermes/config.yaml IS the security policy" + `:139 _HERMES_CONFIG_PATH` + `:166-170 _SENSITIVE_WRITE_TARGET` + `:369-370 tee/>/>>` + `:413-414 sed -i / sed --in-place` 全闸；9 regression test
+  - **Skills guard 良性内容 + ignore 蜜罐** (`ba6ffd4ff`)：`tools/skills_guard.py +137`，`.skillignore` / `.clawhubignore` (gitignore-style) 排除 dev/docs；`SKILL.md` 永不可忽略；80 测试通过（64 旧 + 16 新）
+  - **Gateway MEDIA 标签 4 连**：`e8827ef70`（JSON string values）/ `fb1b681b3`（JSON-embedded verbatim）/ `521d06975`（restrict auto-append to producer tools）/ `3ccf4fdc6`（code blocks + blockquotes）/ `6c73e8ffa`（mask as locator 模式，"masking is a locator, not a text rewrite"）；`tests/gateway/test_platform_base.py +16` inline-code-survives
+  - **Gateway 服务重启通知清理** (`b14e15c48`)：9 文件 +378 / -34；新测试 `test_restart_notification.py +42` + `test_telegram_thread_fallback.py +29`
+  - **Streaming broken-stream 不再误报输出截断** (#36705, `023149f66`)：`agent/conversation_loop.py +64` 区分 broken stream（retry-bump）vs output_length 截断（length-resume）；`tests/run_agent/test_run_agent.py +75`
+  - **Desktop / Dashboard 后续 9 修复**：`3ef97a61b`/`fa4ebaa8b`/`77bb64813`/`7fbe9b79a`/`0bc616ecf`/`79f7e7a1e`/`359f2be12`（drop files anywhere 新 `chat-drop-overlay.tsx` + `use-file-drop-zone.ts`）/ `c1a531d06`/`e1eba6f8c`
+  - **Docker s6 / 启动权限 10 连**：`b3aaf2676`+`e3998d471`（Playwright headless_shell #35717）/ `f106e58af`（s6 envdir 早于 browser path #34601）/ `bdceedf78`（chown top-level state #35098）/ `380ce4789`（non-root 不 drop privs #34837）/ `064875a54`（s6 /init 镜像 #34628）/ `a60bff282`（tini 兼容 shim #34192）/ `740fb28d0`（chown ensure_hermes_home #34107）/ `1031031de`（卷已 remapped 跳 boot chown #35027）/ `758454d1e`（**HERMES_UID/GID 校验防 stage2-hook 提权 #35340**）/ `dcbf62e26`（s6 gateway state legacy run cmd #34829）
+  - **杂项**：`b9646276f`（HEAD，`os.fchmod` Windows 防护 atomic_json_write）/ `92a567db2`（CI #36687）/ `cd8aa389c`（revert WSL 终端钳制 #36096）/ `cf328723d`（Windows 原生 GA 去 early-beta #36093）/ `9a82cd33d`+`4e530f1a2`（Windows installer GitHub Action 签名 #36190）/ `a75a45414`+`e2ee9177f`（forwarded secret 回落 `.hermes/.env` #35583）/ `a5371b3e6`+`ef3a650f0`+`ec6261ae2`（AUTHOR_MAP）
+
 ## [2026-05-31] sync | hermes-agent 689ef5e2 → eb3cf9750（141 commits, v0.15.1 维护窗口）
 - 同步范围：hermes-agent/main `689ef5e2`（2026-05-29 13:30 -0700）→ `eb3cf9750`（2026-05-31 12:13 -0700），**141 个 commit**，约 47 小时维护窗口
 - 验证基线：`/tmp/hermes-agent` 全历史 clone @ `eb3cf9750`，逐 commit + `grep -n` + `git show <sha> --stat` 实证
