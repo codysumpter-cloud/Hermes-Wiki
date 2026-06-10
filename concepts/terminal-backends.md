@@ -1,13 +1,20 @@
 ---
 title: 终端后端与环境抽象层
 created: 2026-04-07
-updated: 2026-05-31
+updated: 2026-06-09
 type: concept
-tags: [architecture, environments, terminal, isolation, cwd-persistence, spawn-via-env]
-sources: [tools/environments/, tools/terminal_tool.py, tools/process_registry.py]
+tags: [architecture, environments, terminal, isolation, cwd-persistence, spawn-via-env, sane-path-completion-posix, terminal-config-env-map, windows-case-variant-path-key]
+sources: [tools/environments/, tools/terminal_tool.py, tools/process_registry.py, tools/environments/local.py, hermes_cli/config.py]
 ---
 
 # 终端后端与环境抽象层
+
+> **2026-06-09 增量（hermes-agent `a5d05cf30`）— POSIX `_SANE_PATH` 完整化 + Windows case-variant PATH key**：
+>
+> - **POSIX `_SANE_PATH` 缺啥补啥**（PR #42653 / salvage #35614 `a38cc69bc fix(terminal): complete sane PATH entries on POSIX`）—— 修 macOS launchd / gateway 会话 `PATH` 已含 `/usr/bin` 但缺 `/opt/homebrew/{bin,sbin}`，让 Homebrew CLI（`gh` / `brew`）对 terminal tool 不可见。原代码用 `/usr/bin` 作哨兵命中即跳过整段注入。验证：`tools/environments/local.py:297-300 _SANE_PATH = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"`；`_append_missing_sane_path_entries(existing_path: str) at :303-348` POSIX 重写 caller PATH — strip 空 entry（leading/trailing/double `:` 在 POSIX shells 等于 CWD）、collapse 重复 first-occurrence-wins、append `_SANE_PATH` 中缺失的；Windows no-op；`_path_env_key(run_env) at :351-366` POSIX 返 `"PATH"`，Windows 扫 env case-variant key（`Path` vs `PATH`）让写入保留 caller 大小写；`_make_run_env(env) at :384-386` 现 `path_key = _path_env_key(run_env); if path_key is not None: run_env[path_key] = _append_missing_sane_path_entries(run_env.get(path_key, ""))` 替旧 `/usr/bin` 启发；显式 **不** 与 `tools/browser_tool._merge_browser_path` 合并（语义不同：prepend vs append、`os.path.isdir` 过滤、动态候选集）。
+> - **TERMINAL_CONFIG_ENV_MAP 试源**（PR #42695 `76f89d66d fix(test): track TERMINAL_CONFIG_ENV_MAP after env-sync consolidation`）—— terminal-config env bridging 合到 canonical `TERMINAL_CONFIG_ENV_MAP` 后，AST scanner `test_terminal_config_env_sync.py` 仍找已消失 `_config_to_env_sync = {...}` 字面量挂 `AssertionError`。`tests/tools/test_terminal_config_env_sync.py:89-103 _save_config_env_sync_keys()` 改读 `hc_config.TERMINAL_CONFIG_ENV_MAP` 直接（除 `cwd` 另处理）。canonical map at `hermes_cli/config.py:5156-5184`；`terminal_config_env_var_for_key():5193-5198` 是 bridge；`set_config_value at :6132` 调它。详见 [[cli-architecture]]。
+>
+> 详见 [[2026-06-09-update#17-terminal-cluster]]。
 
 ## 设计原理
 

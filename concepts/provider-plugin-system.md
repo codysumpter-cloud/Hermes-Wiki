@@ -1,18 +1,32 @@
 ---
 title: ProviderProfile 插件系统
 created: 2026-05-20
-updated: 2026-05-20
+updated: 2026-06-09
 type: concept
-tags: [provider, transport, plugin, model-routing]
+tags: [provider, transport, plugin, model-routing, openrouter-anthropic-reasoning-mandatory, anthropic-modern-thinking-default, openrouter-live-context-length, nemo-relay-plugins-toml-lifecycle, langfuse-sanitized-response, vision-tool-messages-flag]
 source_files:
   - providers/base.py
   - providers/__init__.py
   - plugins/model-providers/
   - plugins/model-providers/README.md
-verified_against: hermes-agent HEAD (2026-05-20)
+  - plugins/model-providers/openrouter/__init__.py
+  - plugins/observability/nemo_relay/__init__.py
+  - plugins/observability/langfuse/__init__.py
+verified_against: hermes-agent HEAD (a5d05cf30, 2026-06-09)
 ---
 
 # ProviderProfile 插件系统（v0.13.0 起）
+
+> **2026-06-09 增量（hermes-agent `a5d05cf30`）— OpenRouter Anthropic 守护 + NeMo-Relay plugins.toml lifecycle 四连 + Langfuse sanitized response 修**：
+>
+> - **OpenRouter Anthropic reasoning-mandatory 保护**（PR #43012 `46fedef07` + PR #42991 `1febb0824`）—— `plugins/model-providers/openrouter/__init__.py:21-29 _ANTHROPIC_REASONING_OPTIONAL_SUBSTRINGS` 列举仍接受 explicit "disable thinking" form 的 Anthropic 旧 family（与 `_LEGACY_MANUAL_THINKING_CLAUDE_SUBSTRINGS` 同 shape）；`:32-44 _anthropic_reasoning_is_mandatory(model)` 默 mandatory（unknown Anthropic 视为 mandatory，与 Anthropic 直连 default-to-modern 一致）；`:118-140` 三分支：mandatory 时 `pass` 完全省 reasoning；`reasoning_config` 显式给则用；否则默 `{enabled: True, effort: "medium"}`。修 chat_completions 不回放 signed thinking blocks 致 tool-replay turn 上 OpenRouter 发 `thinking: {type: "disabled"}` 被 4.6+/fable 模型 HTTP 400 拒。
+> - **OpenRouter live `context_length` step-5f branch**（PR #42986 `967c325da fix(models)`）—— `agent/model_metadata.py:1815-1835` 新 step-5f 在 step-6 hardcoded catch-all 之前查 OpenRouter live `entry.get("context_length")`。Guard `if effective_provider == "openrouter":` 修原 step-6 死代码（OpenRouter selection 设 `effective_provider="openrouter"`，原 `not effective_provider` 把守的 fallback 永不触发）；保留 Kimi-family 32k underreport guard `not (or_ctx == 32768 and _model_name_suggests_kimi(model))`。
+> - **Vision providers 拒 list-type tool content 主动降级**（已合入；新增字段 `ProviderProfile.supports_vision_tool_messages: bool = True`，Xiaomi MiMo 设 False；`_tool_result_content_for_active_model` proactively 查此字段，False 时返 text summary 替 list content 免 400 "text is not set" round-trip）。
+> - **NeMo-Relay plugins.toml lifecycle 四连**（`9d61076f8 + ecd4679d8 + 728612c29 + 021d1034d` 全在 `plugins/observability/nemo_relay/__init__.py`）—— 完整状态机：`_atof_subscriber_name = "hermes.nemo_relay.atof"` at `:69` 单一来源；构造器 `:63-73` set `_plugin_config_needs_reinit = False` 然后 `if not self._plugin_config_initialized: self._activate_direct_fallbacks()`；`_activate_direct_fallbacks() at :103-105`；`_maybe_reinitialize_plugins_toml() at :107-115` 在 `_plugin_config_needs_reinit and not _plugin_config_initialized` 时重试，成功清 direct ATOF + 取消 reinit flag，失败走 direct fallbacks；`_plugins_toml_owns_exporter(exporter_name) at :117-121` 组合 `_plugin_config_initialized + _observability_exporter_enabled(...)`；`_configure_atof at :142-155` 现 idempotent 且用常量名；`_clear_atof() at :157-166` 调 `deregister(self._atof_subscriber_name)` 后 `atof_exporter = None`；`_clear_plugins_toml at :90-101` 包 try/finally 让 clear 失败也 re-arm（before：`_plugin_config_initialized = True` + `_plugin_config_needs_reinit = False` 让下次 session 既跳 reinit 又跳 fallback）；`ensure_session at :168-` 先调 `_maybe_reinitialize_plugins_toml()`；per-session ATIF exporter gate 改 `self.settings.atif_enabled and not self._plugins_toml_owns_exporter("atif")`；finalize `:235-241` 加 `elif self.settings.plugins_config and not self.sessions: self._plugin_config_needs_reinit = True`。`_Settings.adaptive_mode` 默 `"observe" → "observe_only"` 对齐上游 NeMo Relay contract `[components.config.tool_parallelism] mode`（`_adaptive_mode(config) at :696-707`）。
+> - **NeMo-Relay 保留 downstream errors**（PR #42691 `85852b71d`）—— 共享 `_run_managed_with_downstream_preservation(next_call, normalize_payload, shape_response, make_managed_execute) at :288-323` 把原 provider/tool exception（连带 retry-classification signal 如 `status_code`）从 Relay's wrapper 后救出。`_original_downstream_error(exc) at :844-850` 按 class-name `_DownstreamExecutionError` + `.original` 属性 shape 探，不 import 私类；`_is_relay_wrapped_callback_error(exc, callback_error) at :853-865` 容错 `str.startswith` match `f"internal error: {callback_error.__class__.__name__}: {callback_error}"`（Relay 未来追加 traceback 后缀也不丢 unwrap）。`execute_llm at :325-363` + `execute_tool at :366-` 共享 scaffolding 去重 ~20 行。`from collections.abc import Callable` 加 at `:12`。
+> - **Langfuse sanitized response usage 恢复**（`9f1c16a7f fix(langfuse)`）—— `plugins/observability/langfuse/__init__.py:849` 翻 gate 让 sanitized response (post_api_request 路径) 的 usage dict fallback 真正运行；之前 `getattr(response, "usage", None)` 总 None 致每 turn token/cost 静默 0。`:857-` fallback `elif isinstance(usage, dict) and usage:` 现从 summary dict 拿 `input_tokens / output_tokens / cache_read_tokens / ...` 翻译成 Langfuse-convention key（`"input" / "output" / "cache_read_input_tokens" / "cache_creation_input_tokens"`）。真实 response object（post_llm_call / legacy path）继续走原 branch。
+>
+> 详见 [[2026-06-09-update#7-anthropic-and-models]]、[[2026-06-09-update#8-models-curated]]、[[2026-06-09-update#9-observability-cluster]]。
 
 Hermes 之前把每个 provider 的"怪癖"散落在 `run_agent.py`、`agent/auxiliary_client.py` 和 `agent/model_metadata.py` 的 if/elif 分支里。v0.13.0 用 `ProviderProfile` ABC + `plugins/model-providers/` 插件目录把它**收敛到声明式数据类**。
 

@@ -1,13 +1,23 @@
 ---
 title: Smart Model Routing 智能模型路由
 created: 2026-04-08
-updated: 2026-05-31
+updated: 2026-06-09
 type: concept
-tags: [architecture, module, model-routing, performance, caching, anthropic, provider-plugin, model-picker, catalog-ttl]
-sources: [agent/model_metadata.py, agent/models_dev.py, hermes_cli/model_switch.py, hermes_cli/model_normalize.py, hermes_cli/model_catalog.py, providers/, plugins/model-providers/]
+tags: [architecture, module, model-routing, performance, caching, anthropic, provider-plugin, model-picker, catalog-ttl, fable-5, openrouter-live-context-length, nous-recommended-disk-cache, anthropic-modern-thinking-default, openrouter-anthropic-reasoning-mandatory, model-catalog-disk-seed]
+sources: [agent/model_metadata.py, agent/models_dev.py, hermes_cli/model_switch.py, hermes_cli/model_normalize.py, hermes_cli/model_catalog.py, providers/, plugins/model-providers/, plugins/model-providers/openrouter/__init__.py, agent/anthropic_adapter.py]
 ---
 
 > v0.13.0 起，全部 30 个 provider 走 `providers/base.py:ProviderProfile` ABC + `plugins/model-providers/<name>/` 插件目录。Provider 行为是 *声明性* 的，由 transport 层读取，不再硬编码进 `model_metadata.py`。详见 [[provider-profile-plugins]]。
+>
+> **2026-06-09 模型目录增量（hermes-agent `a5d05cf30`）— Anthropic Fable 5 全链路 + 默认现代 thinking 契约 + OpenRouter live `context_length` step-5f**：
+>
+> - **`anthropic/claude-fable-5` 全链路加入**（PR #43041 `d7886da08 add Fable 5 to model list for Anthropic provider` + PR #42979 `ff9c110d5 feat(models): add anthropic/claude-fable-5 to openrouter + nous curated lists`）—— 验证：`hermes_cli/models.py:329`（Anthropic 直连列表顶部）+ `:36 OPENROUTER_MODELS`（在 opus-4.8 之上）+ `:158 _PROVIDER_MODELS["nous"]`（在 opus-4.8 之上）；`agent/model_metadata.py:144-145 "claude-fable-5": 1000000 / "claude-fable": 1000000`（1M ctx）；`agent/anthropic_adapter.py:127-128 _ANTHROPIC_OUTPUT_LIMITS["claude-fable"] = 128_000`；`website/static/api/model-catalog.json:16, 152 updated_at: "2026-06-09T17:20:16Z"`。
+> - **Anthropic 默认现代 thinking 契约**（PR #42991 `1febb0824 fix(anthropic): default new Claude models to the modern thinking contract`）—— 反转脆弱的 version-substring allowlist 为 *default-to-modern*（镜像 `_get_anthropic_max_output` 的 "default to newest"）。Unknown Claude 模型默 adaptive + xhigh + 无 sampling params；只有显式 legacy 列表保留 manual budget-thinking。验证：`agent/anthropic_adapter.py:97-105 _LEGACY_MANUAL_THINKING_CLAUDE_SUBSTRINGS`（claude-3 / 4.0/4.1/4.5/4-2025/Haiku 4.5）+ `:110-113 _NO_XHIGH_CLAUDE_SUBSTRINGS`（仅 4.6 family，adaptive 但不收 xhigh）+ `:116-117 _is_claude_model(model)` + `:242-289` 三 predicate `_supports_adaptive_thinking / _supports_xhigh_effort / _forbids_sampling_params` 重写；OpenRouter 同步 `plugins/model-providers/openrouter/__init__.py:21-29 _ANTHROPIC_REASONING_OPTIONAL_SUBSTRINGS` + `:32-44 _anthropic_reasoning_is_mandatory(model)`（默 mandatory）。
+> - **OpenRouter Anthropic reasoning-mandatory 即使 enabled 也省**（PR #43012 `46fedef07 fix(openrouter): never send reasoning field for adaptive Anthropic models`）—— chat_completions 不回放 signed thinking blocks 致 tool-replay turn 上 OpenRouter 把 "reasoning requested but history has none" 解析为 `thinking: {type: "disabled"}` 被 4.6+ 模型 HTTP 400 拒。验证：`plugins/model-providers/openrouter/__init__.py:118-140` 三分支 `if _anthropic_reasoning_is_mandatory(model): pass # omit / elif reasoning_config is not None: extra_body["reasoning"] = dict(reasoning_config) / else: ...`。
+> - **OpenRouter live `context_length` step-5f branch**（PR #42986 `967c325da fix(models): read OpenRouter live context_length before hardcoded catch-all`）—— OpenRouter-routed slug 缺 models.dev（如新鲜的 `anthropic/claude-fable-5`）落到通用 `DEFAULT_CONTEXT_LENGTHS["claude"] = 200_000` 而漏报 1M 窗。原 step-6 OR-live fallback 被 `not effective_provider` 把守，但 OpenRouter selection 设 `effective_provider="openrouter"`，因此是死代码。验证：`agent/model_metadata.py:1815-1835` 新 step-5f branch `if effective_provider == "openrouter":` fetch `entry.get("context_length")`；保留 Kimi-family 32k underreport guard。
+> - **Curated Models 增量**（PR #42629 `c4066091c feat(models): add laguna-m.1 + nemotron-3-ultra` + PR #42628 `e687292eb feat(models): persist Nous recommended-models to disk` + PR #42614 `54318c65b feat(models): seed model-catalog disk cache from checkout on update`）—— `hermes_cli/models.py:77 ("poolside/laguna-m.1:free", "free") / :80 ("nvidia/nemotron-3-ultra-550b-a55b:free", "free")` 入 OpenRouter free 块；新 `$HERMES_HOME/cache/nous_recommended_cache.json` per-base map 让 Portal 失败时 fallback；`seed_cache_from_checkout(project_root)` 在 `hermes update` 时从 checkout `website/static/api/model-catalog.json` 自动 seed disk cache（git pull `_cmd_update_impl:8402-8416` + zip `_update_via_zip:5836-5838` 两路径都接）。
+>
+> 详见 [[2026-06-09-update#7-anthropic-and-models]] + [[2026-06-09-update#8-models-curated]]。
 >
 > **2026-05-29 模型目录增量（hermes-agent `689ef5e2`）**：
 >
