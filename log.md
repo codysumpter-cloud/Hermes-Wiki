@@ -675,3 +675,62 @@
 - 关键 commit 用 `git show <sha> --stat` 抽样：`8773bbf` / `2dc6d03` / `c32b17f` / `848baeb` / `b69fce9` / `2fc4615` / `848baeb` / `c310419` / `4272977` / `b3dc539`（dashboard auth Phase 0-7）；`2e3c662` / `0bac880` / `1a8e670` / `c03960d` / `eccbbe4`（honcho 15 子修复）；`9919caf` (Krea) / `249534e` (security-guidance) / `0a83247` (TUI orchestrator) / `f7527b0` (api_server session) / `25f43d3` (api_server /v1/skills #33016) / `cb38ce2` + `b6ca56f` + `e8955f2` (Codex 修复); `0ec052c` (cold start -19s) / `544c31b` (47% agent-loop perf) / `6bd4311` (terminal poll -195ms); `12842d3` + `9ff98da` + `6f3a020` (xAI migrate); `a0c0312` (xAI Web Search); `57145ca` (BrowseShSource); `bc3f1f4` (Bitwarden EU)
 - README.md / index.md badge & changelog 索引：30 → 31 changelogs，"最后更新" 2026-05-26 → 2026-05-27，跟踪 HEAD 标注 `556bf7c5c` → `963d22c`（badge short hash `963d22c`），跟踪远端分支由 `master` 改为 `main`，**concept 页面 45 → 46**（新增 [[dashboard-auth-oauth-gate]]）
 - 验证策略: 每条结论都至少一条 `grep -n` / `Read` 命中 `/tmp/hermes-agent` clone @ `963d22c`；每个 file:line 引用现行 source 实际行号；功能描述对照对应 PR 标题 + commit body + 实际 hunk 内容；645 commit 量级下重点抓 19 个 feat + 3 security + 11 perf 上游 PR 验证
+
+
+## [2026-06-11] ingest | 跨日同步 hermes-agent 212 commits（`a5d05cf30` → `6c752ca3a`）
+- 输入: `git clone NousResearch/hermes-agent` + `git fetch --unshallow` @ `6c752ca3a`（`2026-06-11 13:44:49 -0700`，msg "refactor(agent): tighten SUMMARY_PREFIX wording and fix stale doc references"）；hermes-agent 仍 v0.16.0（pyproject.toml:10 + hermes_cli/__init__.py:17-18 + __release_date__ = "2026.6.5"）
+- 范围: 自 wiki HEAD `db94828` = hermes `a5d05cf30e8f5d79689ff8cee3ed806a6ca1c00e`（2026-06-09T16:47 -0400，"fix(nix); don't run .#fix-lockfiles"）起 212 个新 commit（约 131 fix / 25 feat / 9 chore / 6 test / 6 refactor / 3 style / 3 docs / 3 change / 1 revert / 1 perf / 15 merge / 5 misc）；约 48 小时双日窗口（committer dates 2026-06-09T14:45 -0700 → 2026-06-11T13:44 -0700）；author dates 跨度至 2026-03-30（historic salvage 合入）；版本仍 v0.16.0，未发新版；验证基线 `/home/user/hermes-agent` clone @ `6c752ca3a`
+- 新增 1 个 changelog 页面：
+  - changelog/2026-06-11-update.md（约 36 章 + 验证基线）—— 主题：
+    - **Cron Recipes → Automation Blueprints 改名 + 14 蓝图 catalog**（`1593ca540` 上线 → `e8b757845/e976faac7` 硬化 → `cb29e8a82` rebrand：`cron/recipe_catalog.py → cron/blueprint_catalog.py 713 行` + `tools/recipes → tools/blueprints` + `/cron-recipe → /blueprint`(/bp) + `hermes://blueprint/` + dashboard `/api/cron/blueprints`；4 slot type `time/enum/text/weekdays`；14 个 blueprint；终结同一 `cron.jobs.create_job`；Electron `hermes://` URL scheme + single-instance lock；docs catalog `automation-blueprints-catalog.mdx`）
+    - **Suggested Cron Jobs `9a09ea69f`**（`cron/suggestions.py 257 行` + `cron/suggestion_catalog.py 154 行`；4 source `catalog/recipe/usage/integration`；dedup+latch + pending cap；`tools/blueprints.py:217 register_blueprint_suggestion`；`recipe_to_job_spec → blueprint_to_job_spec` single translation）
+    - **memory/skills `write_approval` 布尔门**（`96af61b6e (#38199)` 上线三态 → `095f526b1 (#43354)` 重构 boolean + `_config_version 28→29` migration → `70d5d7e39 (#43452)` inline prompt/gateway staging/skills review 三连修；`tools/write_approval.py 493 行`；`/memory pending|approve|reject|mode` + `/skills pending|approve|reject|diff|mode`；docs `acd7932c0` cross-link）
+    - **Dashboard 统一多 profile 管理 `875aa8f16 (#44007)` 1419+/310−**（`web_server.py +566 行` profile 参数 query/body 到所有 scoped endpoint；chat PTY `?profile=` HERMES_HOME 重定向；`ProfileProvider/ProfileSwitcher` 全局 URL-persisted；body.profile > query；amber banner）+ `73dd58499 (#44220)` MCP loop HERMES_HOME 上下文 propagate
+    - **Dashboard features**: `d986bb0c6 (#39084)` Profile Builder + `a09343cc9 (#44231)` SKILL.md editor + cron modal attach-skill + `fa7f24e89` Webhook enable + `9c051f57c (#44286)` Anthropic key 链 + `9c16ca879 (#44237)` backup confirm + `c7bfc938d (#44374)` Config 页 profile 路径
+    - **Dashboard OAuth gate**: `63a421d4c (#42578)` `_require_token` 全部走 OAuth gate（修 cookie-auth 401）+ `7df3aa34b (#43214)` public_url override silent reject warn
+    - **Coding-Context Posture `3e74f75e4 (#43316)`**（`agent/coding_context.py 731 行` `ContextProfile/RuntimeMode/GENERAL_PROFILE/CODING_PROFILE`；4 域 System prompt + edit-format tuning + skill index demote + Toolset collapse；`auto|focus|on|off`；subagent 继承；不 memoize）
+    - **Skill index demote 而非 hide**（`ee1a744ac (#44342)` API 改名 `compact_skill_categories`；`4d6a133a9 (#44387)` 反转 gate behind focus mode）+ `a4f179c50 (#44411)` GPT/Codex V4A 单文件编辑
+    - **Parallel Web `e0e257171` 1206+/98− 跨 15 文件**（keyless Search MCP + keyed v1 REST + `parallel-web 0.4.2→0.6.0`）+ `0a5762c78` mcp-web-client 中性 identity + `93764b930/32a73010b` keyless 兜底
+    - **Bedrock `e24c935cf (#44293)`** IAM-denied 自动 `converse()` fallback（`agent/bedrock_adapter.py:211 is_streaming_access_denied_error` + `:1041` + `chat_completion_helpers.py:1618/1635/2468/2471`）
+    - **Anthropic 交错 thinking 5 连**：`aaccaada2` 顺序保真 + `529bb1c3d` strip SDK 字段 + `7a1eed826` redact tool input + 加宽 400 classifier + `86e10dd87` 路由 recovery + `9f95f72b9` strip api_messages + `efcbbde48` in-memory only
+    - **SUMMARY_PREFIX 4 连**（HEAD 即 `6c752ca3a`）：`8f8cad7ec (#41607)` 抗陈旧 + `d5e2fbf24` historical framing + `acb2954d8` `_HISTORICAL_SUMMARY_PREFIXES` 冻 + HEAD `6c752ca3a` wording 收紧（三句塌缩成 WINS+discard 两句）
+    - **OpenRouter `183d86b3e (#43436)`** reasoning_effort 改 verbosity for adaptive Anthropic
+    - **Streaming `615ad9792 (#43570)`** socket read timeout floor 到 180/240/300s 防 Opus reasoning 撕碎
+    - **Params**: `19c07c403` max_completion_tokens 名匹配（gpt-4o/4.1/5/o1/o3/o4） + `2ce3ae3d1` 错分类不误判 unsupported-param
+    - **Model 选择**: `af978ecb1/243cada15` 昂贵确认 + `57c671499 (#43103)` Anthropic aliases 保留 + `5a4297a11` MiniMax M3 hardcode 1M
+    - **Desktop registry-driven slash + /resume/handoff `3ffbdfbcc (#42351)` 1914+/478− 跨 31 文件**
+    - **Desktop composer 解耦 + 草稿 localStorage 6 连**
+    - **Desktop VS Code Marketplace 主题 + 可调终端 pane + Floating HUD + Mac switcher**: `27a321157` + `8f73d0d94 (#42521)` + `833410e02` + `ab5f1a1f1 (#43111)` + `b96bd4808 (#43219)` + `d33965396 (#43188)`
+    - **Desktop 远端 FS `/api/fs/*` 5 连**: `51f47f9a9` + `db79e9013` + `8878484f8` + `56a0f48ba/9121834b3`
+    - **Desktop 远端 attach 5 连**: `4906dcfc2` + `153060e20/b021497bc/891c9a682/29147afd6`
+    - **Desktop misc 18 修**: #43234/#43487/#43496/#43541/#44415/#44453/#43197/#43147/#39639/#40892/#42871/#43702/#43977/#43618 等
+    - **Sessions 3 连**: `e96ca1a0d` empty 清理 + `04b3f1953` 压缩 lineage 归档 + `218452b05 (#43149)` sqlite_master 自愈
+    - **Agent binary @file actionable** `7ffc216bc` + **PDF/DOCX/音频 attach note 改写**: `e7ae145ac/13650ab7f/4e9be3ee3`
+    - **Telegram 5 连**: `3b4c715e1/590b3c0d7/da818510e/d0e017bac/9ca969734`
+    - **Gateway 9 连**: `13f1efdd1/a8f404b29/fa32af886/984e69ff6/5cf6e28a2/f456f302d/264ac72b6/cb2c13055/6a30cfca8`
+    - **Matrix `4717989c1 (#18505)`** room context 隔离 + handle_sync + allowed_users authz + i18n + slash_commands mixin port
+    - **Discord 7 连**: `c3464ecf4 (#44383)` runtime task exit 恢复 + `020ef76cf/08b1c44a5` + `311900842/aea0b7397` + `e5580f43c/4eadef18a`
+    - **Skills hub 7 连**: `298bb93d3 (#43398)` live 进度 + `105625d65` overall_timeout + ClawHub budget + `eee1da45f (#43395)` + `9caa12f4e` frontmatter name + `0a593f132/d1383a6b1` HERMES_HOME-aware + `fdc90346e (#43221)` red-team 移 optional
+    - **Plugins/Web**: `114e26573` 失败 sweep 不缓存 + `93764b930/32a73010b` keyless 兜底
+    - **Cron 5 连**: `7d8d000b1 (#43956)` per-job profile revert + `acd4f34e6/f7a6d6a6a` + `702f4df19 (#41976)` + `b4170f3ac (#43223)`
+    - **CLI/TUI**: `8972a151a (#44265)` 状态栏 idle clock + `2f1951234 (#43439)` 全平台 UTF-8 + `b2043cf15/5508f4bc5` + `f8fd30942/d03cdd63e` + `0b5b7ddfd` + `3c489fda8`
+    - **Install/Update/Backup 7 连**: `899acfe42/9662b76d5/a5c32cdf3/cedd9b6d4/0edeee14c/dd40600e0/ed2b9e43c`
+    - **Tooling 20 连**: Docker/Langfuse/MCP/WhatsApp/CI/.env/Grok/AGENTS.md
+    - **TTS Gemini**: `5718811de` persona + `2c1920822` audio tag rewrite（`tools/tts_tool.py +143 行`）
+- 源码已验证存在（关键样本）：
+  - `cron/blueprint_catalog.py:45 BlueprintFillError(ValueError)` + `:61 BlueprintSlot` + `:83 AutomationBlueprint` + `:120 CATALOG` (14 个 key=) + `:492 blueprint_form_schema` + `:516 blueprint_slash_command` + `:584 blueprint_catalog_entry` + `:661 fill_blueprint` + `:713 行总数`
+  - `cron/suggestion_catalog.py:24 __all__` + `:43 CATALOG` (4 个 key=) + `:154 行总数`
+  - `cron/suggestions.py 257 行`（store + dedup + latch + pending cap）
+  - `tools/blueprints.py:47 register_blueprint_suggestion` + `:217 def` + `:325 行总数`
+  - `tools/write_approval.py:74 write_approval_enabled` + `:253 evaluate_gate` + `:493 行总数`
+  - `hermes_cli/config.py:1723/:1839 "write_approval": False` + `:2523 "_config_version": 29` + `:4784 migration 28→29` + `:4801 sub["write_approval"] = (old_norm == "approve")`
+  - `agent/coding_context.py:213 ContextProfile` + `:253 GENERAL_PROFILE` + `:254 CODING_PROFILE` + `:260 compact_skill_categories=_NON_CODING_SKILL_CATEGORIES` + `:263 _PROFILES` + `:269 get_profile` + `:379 RuntimeMode` + `:445 compact_skill_categories(self) -> frozenset[str]` + `:474 resolve_runtime_mode` + `:543 coding_compact_skill_categories` + `:731 行总数`
+  - `agent/prompt_builder.py:1104 compact_categories: "frozenset[str] | None" = None` + `:1149 tuple(sorted(compact_categories or ()))`
+  - `agent/context_compressor.py:43-69 SUMMARY_PREFIX`（HEAD wording 含 'Topic overlap ... the latest user message WINS. Treat ONLY the latest message as the active task and discard stale items from ...'）+ `:70 LEGACY_SUMMARY_PREFIX` + `:78 _HISTORICAL_SUMMARY_PREFIXES` + `:1598 _strip_summary_prefix` + `:1620 _is_context_summary_content`
+  - `agent/bedrock_adapter.py:211 is_streaming_access_denied_error` + `:1041` + `agent/chat_completion_helpers.py:1618/1635/2468/2471`
+  - `hermes_cli/web_server.py:1439-1514` `/api/fs/list / /api/fs/read-text / /api/fs/read-data-url / /api/fs/git-root / /api/fs/default-cwd` + `:2035 _restart_gateway_after_webhook_enable` + `:3773 "webhook"` + `:3804`
+  - `hermes_state.py:3697 delete_session_if_empty` + `cli.py:5863 _discard_session_if_empty` + `:5883` + `:5910/:13171`
+  - `apps/desktop/src/lib/desktop-fs.ts 84 行` + `desktop-fs.test.ts 100 行` + `apps/desktop/src/app/right-sidebar/files/remote-picker.tsx 177 行`
+- 关键 commit 用 `git show <sha> --stat` 抽样：`1593ca540`（Cron Recipes 上线 1975+/0− 跨 25 文件）/ `cb29e8a82`（rebrand 627+/627− 跨 29 文件）/ `9a09ea69f`（Suggested Cron Jobs）/ `96af61b6e`（write-approval 上线 1270+/11− 跨 13 文件）/ `095f526b1`（boolean 重构）/ `70d5d7e39`（三连修复）/ `875aa8f16`（Dashboard 统一 profile 1419+/310− 跨 21 文件）/ `d986bb0c6` / `a09343cc9` / `63a421d4c` / `3e74f75e4` / `ee1a744ac` / `4d6a133a9` / `a4f179c50` / `e0e257171`（Parallel 1206+/98− 跨 15 文件）/ `e24c935cf` / `aaccaada2/529bb1c3d/7a1eed826/86e10dd87/9f95f72b9`（Anthropic 5 连）/ `8f8cad7ec/d5e2fbf24/acb2954d8/6c752ca3a`（SUMMARY_PREFIX 4 连）/ `183d86b3e` / `615ad9792` / `19c07c403/2ce3ae3d1` / `af978ecb1/243cada15/5a4297a11/57c671499` / `3ffbdfbcc`（slash 1914+/478− 跨 31 文件）/ `8f73d0d94/833410e02/27a321157/ab5f1a1f1/b96bd4808/d33965396` / `51f47f9a9/db79e9013/8878484f8/56a0f48ba/9121834b3` / `4906dcfc2/153060e20/b021497bc/891c9a682/29147afd6` / `0d3e2cc53/04b3f1953/e96ca1a0d/4490c7cf8/218452b05` / `7ffc216bc/e7ae145ac/13650ab7f/4e9be3ee3` / `3b4c715e1/590b3c0d7/da818510e/d0e017bac/9ca969734` / `13f1efdd1/a8f404b29/fa32af886/984e69ff6/5cf6e28a2/f456f302d/264ac72b6/cb2c13055/6a30cfca8` / `4717989c1` / `c3464ecf4/020ef76cf/08b1c44a5/311900842/aea0b7397/e5580f43c/4eadef18a` / `298bb93d3/105625d65/eee1da45f/9caa12f4e/0a593f132/d1383a6b1/fdc90346e` / `114e26573/32a73010b/93764b930` / `7d8d000b1/acd4f34e6/f7a6d6a6a/702f4df19/b4170f3ac` / `8972a151a/2f1951234/b2043cf15/5508f4bc5/f8fd30942/d03cdd63e/0b5b7ddfd/3c489fda8` / `899acfe42/9662b76d5/a5c32cdf3/cedd9b6d4/0edeee14c/dd40600e0/ed2b9e43c` / `a72bb0375/5d8c44a39/464276228/47e77ae16/dca11b665/e71d74682/3edd09a46/4cecb1a13/90f4b3040/3bfbb3f2a/72154ad87/f082b4ec5/07ac18590/af3c8b80b/6110aed9b/15813336c/e4a1b35a3/ea7981eba/1c055a4c5/6b330522e` / `5718811de/2c1920822/189ffe736`
+- README.md / index.md badge & changelog 索引：41 → 42 changelogs，"最后更新" 2026-06-09 → 2026-06-11，跟踪 HEAD 标注 `a5d05cf30` → `6c752ca3a`（badge short hash `6c752ca3`）
+- 验证策略: 每条结论都至少一条 `grep -n` / `Read` 命中 `/home/user/hermes-agent` checkout @ `6c752ca3a`；每个 file:line 引用现行 source 实际行号；功能描述对照对应 PR 标题 + commit body + 实际 hunk 内容；212 commit 量级下重点抓 25 个 feat + 7 个架构主轴 PR + 关键回归修复验证；所有抽样 commit 经 `git show <sha> --stat` 实证修改文件清单与行数
